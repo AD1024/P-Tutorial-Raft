@@ -151,6 +151,18 @@ machine Server {
                 }
             }
         }
+
+        on eRequestVoteReply do (payload: tRequestVoteReply) {
+            if (payload.term > currentTerm) {
+                currentTerm = payload.term;
+                goto Follower;
+            } else if (payload.voteGranted) {
+                votesReceived += (this);
+                if (sizeof(votesReceived) > clusterSize / 2) {
+                    goto Leader;
+                }
+            }
+        }
         
         on eRequestVote do (payload: tRequestVote)  {
             send payload.candidate, eRequestVoteReply, (term=currentTerm, voteGranted=false);

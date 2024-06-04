@@ -14,10 +14,18 @@ fun setUpRaft(numberOfServers:int) {
   }
 }
 
-machine testLeaderElection {
+machine LeaderElectionThreeServers {
   start state Init {
     entry { 
       setUpRaft(3);
+    }
+  }
+}
+
+machine LeaderElectionFiveServers {
+  start state Init {
+    entry { 
+      setUpRaft(5);
     }
   }
 }

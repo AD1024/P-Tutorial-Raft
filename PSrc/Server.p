@@ -2,6 +2,8 @@ type ServerId = int;
 type tRaftResponse = (success: bool, result: any);
 event eRaftResponse: tRaftResponse;
 
+event eServerInit: (myId: ServerId, cluster: set[Server]);
+
 type tRequestVote = (term: int, candidate: Server, lastLogIndex: int, lastLogTerm: int);
 event eRequestVote: tRequestVote;
 type tRequestVoteReply = (term: int, voteGranted: bool);
@@ -76,7 +78,8 @@ machine Server {
     var electionTimer: Timer;
 
     start state Init {
-        entry (setup: (myId: ServerId, cluster: set[Server])) {
+        entry {}
+        on eServerInit do (setup: (myId: ServerId, cluster: set[Server])) {
             kvStore = newStore();
             serverId = setup.myId;
             clusterSize = sizeof(setup.cluster);
@@ -156,6 +159,7 @@ machine Server {
 
     state Leader {
         entry {
+            
             var heartBeat: tAppendEntries;
             leader = this;
             heartBeat = (term=currentTerm, leader=this,
@@ -164,6 +168,7 @@ machine Server {
                 leaderCommit=0);
             // nextIndex
             restartTimer(electionTimer, 50);
+            announce eAppendEntries, heartBeat;
             broadcastRequest(this, peers, eAppendEntries, heartBeat);
         }
 

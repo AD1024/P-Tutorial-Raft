@@ -1,0 +1,93 @@
+Total event coverage: 61.5%
+===========================
+StateMachine: _GodMachine
+=========================
+Event coverage: 100.0%
+
+	State: Init
+		State has no expected events, so coverage is 100%
+
+Monitor: RaftAlwaysCorrect
+==========================
+Event coverage: 0.0%
+
+	State: Init is uncovered
+		Events not covered: eBecomeLeader
+
+StateMachine: Server
+====================
+Event coverage: 57.1%
+
+	State: __InitState__
+		State event coverage: 100.0%
+		Events received: Server+ConstructorEvent
+		Events sent: Server+ConstructorEvent
+		Next states: Init
+
+	State: Init
+		State event coverage: 100.0%
+		Events received: eServerInit
+		Previous states: __InitState__
+		Next states: Follower
+
+	State: Follower
+		State event coverage: 66.7%
+		Events received: eRequestVote, eTimerTimeout
+		Events sent: eCancelTimer, eRequestVoteReply, eStartTimer
+		Events not covered: eAppendEntries
+		Previous states: Candidate, Init
+		Next states: Candidate
+
+	State: Candidate is uncovered
+		Events sent: eCancelTimer, eRequestVote
+		Events not covered: eRequestVote
+		Previous states: Follower
+		Next states: Follower
+
+	State: Leader is uncovered
+		Events not covered: eTimerTimeout
+
+StateMachine: Timer
+===================
+Event coverage: 75.0%
+
+	State: __InitState__
+		State event coverage: 100.0%
+		Events received: Timer+ConstructorEvent
+		Events sent: Timer+ConstructorEvent
+		Next states: Init
+
+	State: Init
+		State has no expected events, so coverage is 100%
+		Previous states: __InitState__
+		Next states: TimerIdle
+
+	State: TimerIdle
+		State event coverage: 100.0%
+		Events received: eStartTimer
+		Previous states: Init, TimerTick
+		Next states: TimerTick
+
+	State: TimerTick
+		State event coverage: 50.0%
+		Events received: eTick
+		Events sent: eTick, eTimerTimeout
+		Events not covered: eCancelTimer
+		Previous states: TimerIdle, TimerTick
+		Next states: TimerIdle, TimerTick
+
+StateMachine: testLeaderElection
+================================
+Event coverage: 100.0%
+
+	State: __InitState__
+		State event coverage: 100.0%
+		Events received: testLeaderElection+ConstructorEvent
+		Events sent: testLeaderElection+ConstructorEvent
+		Next states: Init
+
+	State: Init
+		State has no expected events, so coverage is 100%
+		Events sent: eServerInit
+		Previous states: __InitState__
+

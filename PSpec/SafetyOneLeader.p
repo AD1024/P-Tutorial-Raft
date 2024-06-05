@@ -1,6 +1,6 @@
 event eBecomeLeader: (term:int, leader:Server);
 
-spec RaftAlwaysCorrect observes eBecomeLeader{
+spec SafetyOneLeader observes eBecomeLeader{
     var termToLeader: map[int, Server];
     start state Init {
         entry {

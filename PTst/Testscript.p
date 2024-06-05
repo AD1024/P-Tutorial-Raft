@@ -1,9 +1,9 @@
 module LeaderElections = { LeaderElectionThreeServers, LeaderElectionFiveServers };
 
 test threeServers [main=LeaderElectionThreeServers]:
-  assert RaftAlwaysCorrect, LeaderExists in
+  assert SafetyOneLeader, LivenessLeaderExists in
   (union Server, Timer, LeaderElections);
 
 test fiveServers [main=LeaderElectionFiveServers]:
-  assert RaftAlwaysCorrect, LeaderExists in
+  assert SafetyOneLeader, LeaderExists in
   (union Server, Timer, LeaderElections);

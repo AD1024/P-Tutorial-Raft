@@ -30,7 +30,7 @@ machine Client {
             } else {
                 currentCmd = worklist[ptr];
                 ptr = ptr + 1;
-                broadcastRequest(this);
+                broadcastToCluster();
                 startTimer(retryTimer, retryInterval);
                 goto WaitForResponse;
             }
@@ -38,20 +38,23 @@ machine Client {
     }
 
     hot state WaitForResponse {
-        on eRaftResponse do {
-            goto SendOne;
+        on eRaftResponse do (resp: tRaftResponse) {
+            if (resp.transId == tId) {
+                tId = tId + 1;
+                goto SendOne;
+            }
         }
 
         on eTimerTimeout do {
-            broadcastRequest(this);
+            broadcastToCluster();
             startTimer(retryTimer, retryInterval);
         }
     }
 
-    fun broadcastRequest(client: Client) {
+    fun broadcastToCluster() {
         var s: Server;
         foreach (s in servers) {
-            send s, eClientRequest, (transId=tId, client=client, cmd=currentCmd);
+            send s, eClientRequest, (transId=tId, client=this, cmd=currentCmd);
         }
     }
 

@@ -1,5 +1,5 @@
 type ServerId = int;
-type tRaftResponse = (transId: int, success: bool, result: any);
+type tRaftResponse = (client: Client, transId: int, result: any);
 event eRaftResponse: tRaftResponse;
 
 event eServerInit: (myId: ServerId, cluster: set[Server]);
@@ -13,12 +13,12 @@ type tAppendEntries = (term: int, leader: Server, prevLogIndex: int,
                        prevLogTerm: int, entries: seq[tServerLog], leaderCommit: int);
 event eAppendEntries: tAppendEntries;
 
-enum CmdStatus {
-    ACCEPTED,
-    COMITTED
-}
+type tAppendEntriesReply = (sender: Server, term: int, success: bool, firstIndexUnmatched: int);
+event eAppendEntriesReply: tAppendEntriesReply;
 
-type tServerLog = (term: int, command: Command, status: CmdStatus);
+event eReset;
+
+type tServerLog = (term: int, command: Command);
 // AppendEntries
 type tAppendEntriesRequest = (
     sender: ServerId,
@@ -71,6 +71,7 @@ machine Server {
             electionTimer = new Timer(this);
             goto Follower;
         }
+        ignore eReset;
     }
 
     state Follower {
@@ -78,8 +79,12 @@ machine Server {
             restartTimer(electionTimer, 150 + choose(150));
         }
 
+        on eReset do {
+            reset();
+        }
+
         on eRequestVote do (payload: tRequestVote) {
-            handleRequestVoteRequest(payload);
+            handleRequestVote(payload);
         }
 
         on eClientRequest do (payload: tClientRequest) {
@@ -93,6 +98,8 @@ machine Server {
         }
 
         on eTimerTimeout goto Candidate;
+
+        ignore eRequestVoteReply, eAppendEntriesReply;
     }
 
     state Candidate {
@@ -113,6 +120,7 @@ machine Server {
                                         lastLogIndex=lastLogIndex(logs),
                                         lastLogTerm=lastLogTerm(logs)));
             }
+            startTimer(electionTimer, 150 + choose(150));
         }
 
         on eAppendEntries do (payload: tAppendEntries) {
@@ -137,9 +145,17 @@ machine Server {
         on eRequestVote do (payload: tRequestVote)  {
             if (payload.term > currentTerm) {
                 currentTerm = payload.term;
-                handleRequestVoteRequest(payload);
+                handleRequestVote(payload);
                 goto Follower;
             }
+        }
+
+        on eReset do {
+            reset();
+        }
+
+        on eTimerTimeout do {
+            goto Candidate;
         }
 
         ignore eClientRequest;
@@ -153,8 +169,8 @@ machine Server {
                 prevLogIndex=0, prevLogTerm=1,
                 entries=default(seq[tServerLog]),
                 leaderCommit=0);
-            fillMap(nextIndex, peers, lastLogIndex(logs) + 1);
-            fillMap(matchIndex, peers, 0);
+            nextIndex = fillMap(nextIndex, peers, lastLogIndex(logs) + 1);
+            matchIndex = fillMap(matchIndex, peers, 0);
             restartTimer(electionTimer, 50);
             announce eBecomeLeader, (term=currentTerm, leader=this);
             broadcastRequest(this, peers, eAppendEntries, heartbeat);
@@ -169,13 +185,7 @@ machine Server {
         }
 
         on eTimerTimeout do {
-            var heartBeat: tAppendEntries;
-            heartBeat = (term=currentTerm, leader=this,
-                prevLogIndex=0, prevLogTerm=1,
-                entries=default(seq[tServerLog]),
-                leaderCommit=0);
-            broadcastRequest(this, peers, eAppendEntries, heartBeat);
-            startTimer(electionTimer, 50);
+            broadcastAppendEntries(this, currentTerm, commitIndex, logs, peers, nextIndex);
         }
 
         on eAppendEntries do (payload: tAppendEntries) {
@@ -187,15 +197,36 @@ machine Server {
         }
 
         on eClientRequest do (payload: tClientRequest) {
+            var newEntry: tServerLog;
+            var target: Server;
+            var entries: seq[tServerLog];
+            var i: int;
             if (payload.cmd.op == GET) {
-                send payload.client, eRaftResponse, (transId=payload.transId, success=true, result=execute(kvStore, payload.cmd));
+                send payload.client, eRaftResponse, (client=payload.client, transId=payload.transId, result=execute(kvStore, payload.cmd).result);
+            } else {
+                newEntry = (term=currentTerm, command=payload.cmd);
+                if (!(newEntry in logs)) {
+                    logs += (lastLogIndex(logs) + 1, newEntry);
+                }
+                // use info of nextIndex and matchIndex to broadcast to peers
+                foreach (target in peers) {
+                    if (target != this && nextIndex[target] <= lastLogIndex(logs)) {
+                        entries = default(seq[tServerLog]);
+                        i = nextIndex[target];
+
+                    }
+                }
             }
+        }
+
+        on eReset do {
+            reset();
         }
 
         ignore eRequestVoteReply;
     }
 
-    fun handleRequestVoteRequest(reply: tRequestVote) {
+    fun handleRequestVote(reply: tRequestVote) {
         leader = null as Server;
         if (reply.term < currentTerm) {
             send reply.candidate, eRequestVoteReply, (sender=this, term=currentTerm, voteGranted=false);
@@ -207,6 +238,71 @@ machine Server {
             } else {
                 send reply.candidate, eRequestVoteReply, (sender=this, term=currentTerm, voteGranted=false);
             }
+        }
+    }
+
+    fun handleAppendEntries(resp: tAppendEntries) {
+        var myLastIndex: int;
+        var myLastTerm: int;
+        var ptr: int;
+        var mismatchedTerm: int;
+        var i: int;
+        var j: int;
+        if (resp.term > currentTerm) {
+            becomeFollower(resp.term);
+        } else if (resp.term < currentTerm) {
+            send resp.leader, eAppendEntriesReply, (sender=this, term=currentTerm,
+                                                    success=false, firstIndexUnmatched=-1);
+        } else if (sizeof(logs) <= resp.prevLogIndex) {
+            // If the log is very outdated
+            send resp.leader, eAppendEntriesReply, (sender=this, term=currentTerm, success=false, firstIndexUnmatched=sizeof(logs)); 
+        } else if (logs[resp.prevLogIndex].term != resp.prevLogTerm) {
+            // Log consistency check failed here;
+            // search for the first occurence of the mismatched
+            // term and notify the leader.
+            ptr = resp.prevLogIndex;
+            mismatchedTerm = logs[ptr].term;
+            while (ptr > 0 && logs[ptr].term == mismatchedTerm) {
+                ptr = ptr - 1;
+            }
+            send resp.leader, eAppendEntriesReply, (sender=this, term=currentTerm,
+                                                    success=false, firstIndexUnmatched=ptr);
+        } else {
+            // Check if any entries disagree; delete all entries after it.
+            i = resp.prevLogIndex + 1;
+            j = 0;
+            while (i < sizeof(logs) && j < sizeof(resp.entries)) {
+                if (logs[i].term != resp.entries[j].term) {
+                    break;
+                }
+                i = i + 1;
+                j = j + 1;
+            }
+            while (i < sizeof(logs)) {
+                logs -= (lastLogIndex(logs));
+            }
+            // Append entries
+            j = 0;
+            while (j < sizeof(resp.entries)) {
+                logs[resp.prevLogIndex + 1 + j] = resp.entries[j];
+                j = j + 1;
+            }
+            if (resp.leaderCommit > commitIndex) {
+                if (resp.leaderCommit > lastLogIndex(logs)) {
+                    commitIndex = lastLogIndex(logs);
+                } else {
+                    commitIndex = resp.leaderCommit;
+                }
+            }
+            executeCommands();
+            send resp.leader, eAppendEntriesReply, (sender=this, term=currentTerm, success=true, firstIndexUnmatched=lastLogIndex(logs) + 1);
+        }
+    }
+
+    fun executeCommands() {
+        while (commitIndex > lastApplied) {
+            lastApplied = lastApplied + 1;
+            execute(kvStore, logs[lastApplied].command);
         }
     }
 
@@ -223,6 +319,14 @@ machine Server {
     fun becomeFollower(term: int) {
         cancelTimer(electionTimer);
         currentTerm = term;
+        goto Follower;
+    }
+
+    fun reset() {
+        commitIndex = 0;
+        lastApplied = -1;
+        nextIndex = fillMap(nextIndex, peers, 0);
+        matchIndex = fillMap(matchIndex, peers, 0);
         goto Follower;
     }
 }

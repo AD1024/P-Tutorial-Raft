@@ -10,17 +10,17 @@ fun newStore(): KVStore {
     return default(KVStore);
 }
 
-fun execute(store: KVStore, command: Command): Result {
+fun execute(store: KVStore, command: Command): (newState: KVStore, result: Result) {
     if (command.op == PUT) {
         assert command.value != null;
         store[command.key] = command.value;
-        return (success=true, value=null);
+        return (newState=store, result=(success=true, value=null));
     }
     if (command.op == GET) {
         if (!(command.key in store)) {
-            return (success=false, value=null);
+            return (newState=store, result=(success=false, value=null));
         }
-        return (success=true, value=store[command.key]);
+        return (newState=store, result=(success=true, value=store[command.key]));
     }
     assert false, "unreachable";
 }

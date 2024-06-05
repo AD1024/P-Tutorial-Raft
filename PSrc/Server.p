@@ -27,32 +27,6 @@ type tAppendEntriesRequest = (
     logs: seq[tServerLog]
 );
 
-fun startTimer(timer: Timer, timeout: int) {
-    send timer, eStartTimer, timeout;
-}
-
-fun cancelTimer(timer: Timer) {
-    send timer, eCancelTimer;
-}
-
-fun restartTimer(timer: Timer, timeout: int) {
-    cancelTimer(timer);
-    startTimer(timer, timeout);
-}
-
-fun lastIndex(log: seq[tServerLog]): int {
-    return sizeof(log);
-}
-
-fun broadcastRequest(self: Server, peers: set[Server], e: event, payload: any) {
-    var peer: Server;
-    foreach(peer in peers) {
-        if (peer != self) {
-            send peer, e, payload;
-        }
-    }
-}
-
 machine Server {
     var serverId: ServerId;
     var kvStore: KVStore;
@@ -105,8 +79,9 @@ machine Server {
         }
 
         on eRequestVote do (payload: tRequestVote) {
-            if (currentTerm <= payload.term && votedFor == null as Server) {
-                // TODO: log up-to-date check
+            if (currentTerm <= payload.term
+                    && votedFor == null as Server
+                    && logUpToDateCheck(payload.lastLogIndex, payload.lastLogTerm)) {
                 send payload.candidate, eRequestVoteReply, (sender=this, term=currentTerm, voteGranted=true);
                 currentTerm = payload.term;
                 restartTimer(electionTimer, 150 + choose(150));
@@ -136,20 +111,11 @@ machine Server {
             if (sizeof(votesReceived) > clusterSize / 2) {
                 goto Leader;
             } else {
-                if (sizeof(logs) == 0) {
-                    lastTerm = 0;
-                } else {
-                    lastTerm = logs[-1].term;
-                }
-                foreach (peer in peers) {
-                    if (peer != this) {
-                        send peer, eRequestVote,
-                            (term=currentTerm,
-                             candidate=this,
-                             lastLogIndex=sizeof(logs),
-                             lastLogTerm=lastTerm);
-                    }
-                }
+                broadcastRequest(this, peers, eRequestVote,
+                                    (term=currentTerm,
+                                        candidate=this,
+                                        lastLogIndex=lastLogIndex(logs),
+                                        lastLogTerm=lastLogTerm(logs)));
             }
         }
 
@@ -178,19 +144,16 @@ machine Server {
                 prevLogIndex=0, prevLogTerm=1,
                 entries=default(seq[tServerLog]),
                 leaderCommit=0);
-            // nextIndex
+            fillMap(nextIndex, peers, lastLogIndex(logs) + 1);
+            fillMap(matchIndex, peers, 0);
             restartTimer(electionTimer, 50);
             announce eBecomeLeader, (term=currentTerm, leader=this);
             broadcastRequest(this, peers, eAppendEntries, heartBeat);
         }
 
         on eRequestVote do (payload: tRequestVote) {
-            if (currentTerm <= payload.term) {
-                // TODO: check log up-to-date
-                currentTerm = payload.term;
-                votedFor = payload.candidate;
-                leader = payload.candidate;
-                goto Follower;
+            if (currentTerm < payload.term && logUpToDateCheck(payload.lastLogIndex, payload.lastLogTerm)) {
+                becomeFollowerOf(payload.candidate, payload.term, true);
             }
         }
 
@@ -205,13 +168,34 @@ machine Server {
         }
 
         on eAppendEntries do (payload: tAppendEntries) {
-            if (payload.term > currentTerm) {
-                currentTerm = payload.term;
-                // votedFor = null as Server;
-                goto Follower;
+            if (payload.term > currentTerm && logUpToDateCheck(payload.prevLogIndex, payload.prevLogTerm)) {
+                becomeFollowerOf(payload.leader, payload.term, false);
+            } else if (payload.term < currentTerm) {
+                send payload.leader, eRequestVoteReply, (sender=this, term=currentTerm, voteGranted=false);
             }
         }
 
         ignore eRequestVoteReply;
+    }
+
+    fun logUpToDateCheck(lastIndex: int, lastTerm: int): bool {
+        if (lastTerm > lastLogTerm(logs)) {
+            return true;
+        }
+        if (lastTerm < lastLogTerm(logs)) {
+            return false;
+        }
+        return lastIndex >= lastLogIndex(logs);
+    }
+
+    fun becomeFollowerOf(server: Server, term: int, ack: bool) {
+        cancelTimer(electionTimer);
+        currentTerm = term;
+        votedFor = server;
+        leader = server;
+        if (ack) {
+            send server, eRequestVoteReply, (sender=this, term=currentTerm, voteGranted=true);
+        }
+        goto Follower;
     }
 }

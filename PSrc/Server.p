@@ -6,7 +6,7 @@ event eServerInit: (myId: ServerId, cluster: set[Server]);
 
 type tRequestVote = (term: int, candidate: Server, lastLogIndex: int, lastLogTerm: int);
 event eRequestVote: tRequestVote;
-type tRequestVoteReply = (term: int, voteGranted: bool);
+type tRequestVoteReply = (sender: Server, term: int, voteGranted: bool);
 event eRequestVoteReply: tRequestVoteReply;
 
 type tAppendEntries = (term: int, leader: Server, prevLogIndex: int,
@@ -107,10 +107,11 @@ machine Server {
         on eRequestVote do (payload: tRequestVote) {
             if (currentTerm <= payload.term && votedFor == null as Server) {
                 // TODO: log up-to-date check
-                send payload.candidate, eRequestVoteReply, (term=currentTerm, voteGranted=true);
+                send payload.candidate, eRequestVoteReply, (sender=this, term=currentTerm, voteGranted=true);
+                currentTerm = payload.term;
                 restartTimer(electionTimer, 150 + choose(150));
             } else {
-                send payload.candidate, eRequestVoteReply, (term=currentTerm, voteGranted=false);
+                send payload.candidate, eRequestVoteReply, (sender=this, term=currentTerm, voteGranted=false);
             }
         }
 
@@ -157,7 +158,7 @@ machine Server {
                 currentTerm = payload.term;
                 goto Follower;
             } else if (payload.voteGranted) {
-                votesReceived += (this);
+                votesReceived += (payload.sender);
                 if (sizeof(votesReceived) > clusterSize / 2) {
                     goto Leader;
                 }
@@ -165,13 +166,12 @@ machine Server {
         }
         
         on eRequestVote do (payload: tRequestVote)  {
-            send payload.candidate, eRequestVoteReply, (term=currentTerm, voteGranted=false);
+            send payload.candidate, eRequestVoteReply, (sender=this, term=currentTerm, voteGranted=false);
         }
     }
 
     state Leader {
         entry {
-            
             var heartBeat: tAppendEntries;
             leader = this;
             heartBeat = (term=currentTerm, leader=this,
@@ -180,8 +180,18 @@ machine Server {
                 leaderCommit=0);
             // nextIndex
             restartTimer(electionTimer, 50);
-            announce eAppendEntries, heartBeat;
+            announce eBecomeLeader, (term=currentTerm, leader=this);
             broadcastRequest(this, peers, eAppendEntries, heartBeat);
+        }
+
+        on eRequestVote do (payload: tRequestVote) {
+            if (currentTerm <= payload.term) {
+                // TODO: check log up-to-date
+                currentTerm = payload.term;
+                votedFor = payload.candidate;
+                leader = payload.candidate;
+                goto Follower;
+            }
         }
 
         on eTimerTimeout do {
@@ -193,5 +203,15 @@ machine Server {
             broadcastRequest(this, peers, eAppendEntries, heartBeat);
             startTimer(electionTimer, 50);
         }
+
+        on eAppendEntries do (payload: tAppendEntries) {
+            if (payload.term > currentTerm) {
+                currentTerm = payload.term;
+                // votedFor = null as Server;
+                goto Follower;
+            }
+        }
+
+        ignore eRequestVoteReply;
     }
 }

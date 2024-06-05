@@ -3,7 +3,7 @@ type tStartTimer = int;
 event eStartTimer: tStartTimer;
 event eTimerTimeout;
 event eCancelTimer;
-event eTick;
+event eTick: int;
 
 machine Timer {
     var holder: machine;
@@ -14,6 +14,7 @@ machine Timer {
             holder = user;
             goto TimerIdle;
         }
+        ignore eCancelTimer, eTick, eStartTimer;
     }
 
     state TimerIdle {
@@ -29,7 +30,7 @@ machine Timer {
         entry {
             checkTick();
         }
-        on eTick do {
+        on eTick do (tick: int) {
             ticksRemain = ticksRemain - 1;
             checkTick();
         }
@@ -42,7 +43,7 @@ machine Timer {
             send holder, eTimerTimeout;
             goto TimerIdle;
         } else {
-            send this, eTick;
+            send this, eTick, ticksRemain;
         }
     }
 }

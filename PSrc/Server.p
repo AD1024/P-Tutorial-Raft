@@ -147,9 +147,9 @@ machine Server {
 
     state Leader {
         entry {
-            var heartBeat: tAppendEntries;
+            var heartbeat: tAppendEntries;
             leader = this;
-            heartBeat = (term=currentTerm, leader=this,
+            heartbeat = (term=currentTerm, leader=this,
                 prevLogIndex=0, prevLogTerm=1,
                 entries=default(seq[tServerLog]),
                 leaderCommit=0);
@@ -157,7 +157,7 @@ machine Server {
             fillMap(matchIndex, peers, 0);
             restartTimer(electionTimer, 50);
             announce eBecomeLeader, (term=currentTerm, leader=this);
-            broadcastRequest(this, peers, eAppendEntries, heartBeat);
+            broadcastRequest(this, peers, eAppendEntries, heartbeat);
         }
 
         on eRequestVote do (payload: tRequestVote) {

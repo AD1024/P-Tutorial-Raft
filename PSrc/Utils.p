@@ -1,5 +1,4 @@
 // Some utility functions
-
 fun startTimer(timer: Timer, timeout: int) {
     send timer, eStartTimer, timeout;
 }

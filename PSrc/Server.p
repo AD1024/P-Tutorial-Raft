@@ -79,24 +79,14 @@ machine Server {
         }
 
         on eRequestVote do (payload: tRequestVote) {
-            if (currentTerm <= payload.term
-                    && votedFor == null as Server
-                    && logUpToDateCheck(payload.lastLogIndex, payload.lastLogTerm)) {
-                send payload.candidate, eRequestVoteReply, (sender=this, term=currentTerm, voteGranted=true);
-                currentTerm = payload.term;
-                restartTimer(electionTimer, 150 + choose(150));
-            } else {
-                send payload.candidate, eRequestVoteReply, (sender=this, term=currentTerm, voteGranted=false);
-            }
+            handleRequestVoteRequest(payload);
         }
 
         on eAppendEntries do (payload: tAppendEntries) {
             restartTimer(electionTimer, 150 + choose(150));
         }
 
-        on eTimerTimeout do {
-            goto Candidate;
-        }
+        on eTimerTimeout goto Candidate;
     }
 
     state Candidate {
@@ -119,6 +109,13 @@ machine Server {
             }
         }
 
+        on eAppendEntries do (payload: tAppendEntries) {
+            if (payload.term > currentTerm) {
+                currentTerm = payload.term;
+                goto Follower;
+            }
+        }
+
         on eRequestVoteReply do (payload: tRequestVoteReply) {
             if (payload.term > currentTerm) {
                 currentTerm = payload.term;
@@ -132,7 +129,11 @@ machine Server {
         }
         
         on eRequestVote do (payload: tRequestVote)  {
-            send payload.candidate, eRequestVoteReply, (sender=this, term=currentTerm, voteGranted=false);
+            if (payload.term > currentTerm) {
+                currentTerm = payload.term;
+                handleRequestVoteRequest(payload);
+                goto Follower;
+            }
         }
     }
 
@@ -152,8 +153,10 @@ machine Server {
         }
 
         on eRequestVote do (payload: tRequestVote) {
-            if (currentTerm < payload.term && logUpToDateCheck(payload.lastLogIndex, payload.lastLogTerm)) {
-                becomeFollowerOf(payload.candidate, payload.term, true);
+            if (currentTerm < payload.term) {
+                becomeFollower(payload.term);
+            } else {
+                send payload.candidate, eRequestVoteReply, (sender=this, term=currentTerm, voteGranted=false);
             }
         }
 
@@ -169,13 +172,28 @@ machine Server {
 
         on eAppendEntries do (payload: tAppendEntries) {
             if (payload.term > currentTerm && logUpToDateCheck(payload.prevLogIndex, payload.prevLogTerm)) {
-                becomeFollowerOf(payload.leader, payload.term, false);
+                becomeFollower(payload.term);
             } else if (payload.term < currentTerm) {
                 send payload.leader, eRequestVoteReply, (sender=this, term=currentTerm, voteGranted=false);
             }
         }
 
         ignore eRequestVoteReply;
+    }
+
+    fun handleRequestVoteRequest(reply: tRequestVote) {
+        leader = null as Server;
+        if (reply.term < currentTerm) {
+            send reply.candidate, eRequestVoteReply, (sender=this, term=currentTerm, voteGranted=false);
+        } else {
+            if ((votedFor == null as Server || votedFor == reply.candidate)
+                    && logUpToDateCheck(reply.lastLogIndex, reply.lastLogTerm)) {
+                votedFor = reply.candidate;
+                send reply.candidate, eRequestVoteReply, (sender=this, term=currentTerm, voteGranted=true);
+            } else {
+                send reply.candidate, eRequestVoteReply, (sender=this, term=currentTerm, voteGranted=false);
+            }
+        }
     }
 
     fun logUpToDateCheck(lastIndex: int, lastTerm: int): bool {
@@ -188,14 +206,9 @@ machine Server {
         return lastIndex >= lastLogIndex(logs);
     }
 
-    fun becomeFollowerOf(server: Server, term: int, ack: bool) {
+    fun becomeFollower(term: int) {
         cancelTimer(electionTimer);
         currentTerm = term;
-        votedFor = server;
-        leader = server;
-        if (ack) {
-            send server, eRequestVoteReply, (sender=this, term=currentTerm, voteGranted=true);
-        }
         goto Follower;
     }
 }

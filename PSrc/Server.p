@@ -163,17 +163,12 @@ machine Server {
 
     state Leader {
         entry {
-            var heartbeat: tAppendEntries;
             leader = this;
-            heartbeat = (term=currentTerm, leader=this,
-                prevLogIndex=0, prevLogTerm=1,
-                entries=default(seq[tServerLog]),
-                leaderCommit=0);
             nextIndex = fillMap(nextIndex, peers, lastLogIndex(logs) + 1);
             matchIndex = fillMap(matchIndex, peers, 0);
             restartTimer(electionTimer, 50);
             announce eBecomeLeader, (term=currentTerm, leader=this);
-            broadcastRequest(this, peers, eAppendEntries, heartbeat);
+            broadcastAppendEntries();
         }
 
         on eRequestVote do (payload: tRequestVote) {
@@ -185,7 +180,7 @@ machine Server {
         }
 
         on eTimerTimeout do {
-            broadcastAppendEntries(this, currentTerm, commitIndex, logs, peers, nextIndex);
+            broadcastAppendEntries();
         }
 
         on eAppendEntries do (payload: tAppendEntries) {
@@ -296,6 +291,51 @@ machine Server {
             }
             executeCommands();
             send resp.leader, eAppendEntriesReply, (sender=this, term=currentTerm, success=true, firstIndexUnmatched=lastLogIndex(logs) + 1);
+        }
+    }
+    
+    fun broadcastAppendEntries() {
+        var target: Server;
+        var i: int;
+        var j: int;
+        var prevIndex: int;
+        var prevTerm: int;
+        var entries: seq[tServerLog];
+        assert this == leader, "Only leader can broadcast AppendEntries";
+        foreach (target in peers) {
+            if (this != target) {
+                entries = default(seq[tServerLog]);
+                prevIndex = nextIndex[target] - 1;
+                if (prevIndex >= 0) {
+                    prevTerm = logs[prevIndex].term;
+                } else {
+                    prevTerm = 0;
+                }
+                if (nextIndex[target] < sizeof(logs)) {
+                    // if the current lead has something to send (nextIndex within range of logs)
+                    i = 0;
+                    j = nextIndex[target];
+                    while (j < sizeof(logs)) {
+                        entries += (i, logs[j]);
+                        i = i + 1;
+                        j = j + 1;
+                    }
+                    send target, eAppendEntries, (term=currentTerm,
+                                                    leader=this,
+                                                    prevLogIndex=prevIndex,
+                                                    prevLogTerm=prevTerm,
+                                                    entries=entries,
+                                                    leaderCommit=commitIndex);
+                } else {
+                    // send empty heartbeat
+                    send target, eAppendEntries, (term=currentTerm,
+                                                    leader=this,
+                                                    prevLogIndex=prevIndex,
+                                                    prevLogTerm=prevTerm,
+                                                    entries=entries,
+                                                    leaderCommit=commitIndex);
+                }
+            }
         }
     }
 

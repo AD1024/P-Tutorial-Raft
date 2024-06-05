@@ -1,4 +1,4 @@
-spec LeaderExists observes eBecomeLeader {
+spec LivenessLeaderExists observes eBecomeLeader {
     start state Init {
         entry {
             goto NoLeader;

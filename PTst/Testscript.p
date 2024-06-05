@@ -5,5 +5,5 @@ test threeServers [main=LeaderElectionThreeServers]:
   (union Server, Timer, LeaderElections);
 
 test fiveServers [main=LeaderElectionFiveServers]:
-  assert SafetyOneLeader, LeaderExists in
+  assert SafetyOneLeader, LivenessLeaderExists in
   (union Server, Timer, LeaderElections);

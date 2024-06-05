@@ -13,12 +13,12 @@ type tAppendEntries = (term: int, leader: Server, prevLogIndex: int,
                        prevLogTerm: int, entries: seq[tServerLog], leaderCommit: int);
 event eAppendEntries: tAppendEntries;
 
-type tAppendEntriesReply = (sender: Server, term: int, success: bool, firstIndexUnmatched: int);
+type tAppendEntriesReply = (sender: Server, term: int, success: bool, matchedIndex: int);
 event eAppendEntriesReply: tAppendEntriesReply;
 
 event eReset;
 
-type tServerLog = (term: int, command: Command);
+type tServerLog = (term: int, command: Command, client: Client, transId: int);
 // AppendEntries
 type tAppendEntriesRequest = (
     sender: ServerId,
@@ -33,6 +33,7 @@ machine Server {
     var leader: Server;
     var clusterSize: int;
     var peers: set[Server];
+    // var executionResults: map[Client, map[int, Result]];
 
     // Leader state (volatile)
     var nextIndex: map[Server, int];
@@ -62,6 +63,7 @@ machine Server {
             matchIndex = default(map[Server, int]);
             votesReceived = default(set[Server]);
             logs = default(seq[tServerLog]);
+            // executionResults = default(map[Client, map[int, Result]]);
 
             currentTerm = 0;
             votedFor = null as Server;
@@ -94,7 +96,13 @@ machine Server {
         }
 
         on eAppendEntries do (payload: tAppendEntries) {
-            restartTimer(electionTimer, 150 + choose(150));
+            cancelTimer(electionTimer);
+            if (payload.term > currentTerm) {
+                votedFor = null as Server;
+                currentTerm = payload.term;
+            }
+            handleAppendEntries(payload);
+            startTimer(electionTimer, 150 + choose(150));
         }
 
         on eTimerTimeout goto Candidate;
@@ -124,8 +132,20 @@ machine Server {
         }
 
         on eAppendEntries do (payload: tAppendEntries) {
+            if (payload.term >= currentTerm) {
+                currentTerm = payload.term;
+                votedFor = null as Server;
+                handleAppendEntries(payload);
+                goto Follower;
+            } else {
+                send payload.leader, eAppendEntriesReply, (sender=this, term=currentTerm, success=false, matchedIndex=-1);
+            }
+        }
+
+        on eAppendEntriesReply do (payload: tAppendEntriesReply) {
             if (payload.term > currentTerm) {
                 currentTerm = payload.term;
+                votedFor = null as Server;
                 goto Follower;
             }
         }
@@ -185,9 +205,30 @@ machine Server {
 
         on eAppendEntries do (payload: tAppendEntries) {
             if (payload.term > currentTerm && logUpToDateCheck(payload.prevLogIndex, payload.prevLogTerm)) {
+                currentTerm = payload.term;
+                handleAppendEntries(payload);
                 becomeFollower(payload.term);
             } else if (payload.term < currentTerm) {
                 send payload.leader, eRequestVoteReply, (sender=this, term=currentTerm, voteGranted=false);
+            }
+        }
+
+        on eAppendEntriesReply do (payload: tAppendEntriesReply) {
+            if (payload.term > currentTerm) {
+                currentTerm = payload.term;
+                votedFor = null as Server;
+                leader = null as Server;
+                goto Follower;
+            }
+            if (payload.success) {
+                nextIndex[payload.sender] = payload.matchedIndex + 1;
+                matchIndex[payload.sender] = payload.matchedIndex;
+                leaderCommits();
+            } else {
+                // rejected because of log mismatch
+                // now, payload.matchedIndex is the index of the (potentially) first mismatched term
+                assert payload.matchedIndex >= 0, "matchedIndex should be non-negative";
+                nextIndex[payload.sender] = payload.matchedIndex;
             }
         }
 
@@ -197,9 +238,11 @@ machine Server {
             var entries: seq[tServerLog];
             var i: int;
             if (payload.cmd.op == GET) {
-                send payload.client, eRaftResponse, (client=payload.client, transId=payload.transId, result=execute(kvStore, payload.cmd).result);
+                send payload.client, eRaftResponse, (client=payload.client,
+                                                     transId=payload.transId,
+                                                     result=execute(kvStore, payload.cmd).result);
             } else {
-                newEntry = (term=currentTerm, command=payload.cmd);
+                newEntry = (term=currentTerm, command=payload.cmd, client=payload.client, transId=payload.transId);
                 if (!(newEntry in logs)) {
                     logs += (lastLogIndex(logs) + 1, newEntry);
                 }
@@ -208,7 +251,16 @@ machine Server {
                     if (target != this && nextIndex[target] <= lastLogIndex(logs)) {
                         entries = default(seq[tServerLog]);
                         i = nextIndex[target];
-
+                        while (i < sizeof(logs)) {
+                            entries += (i, logs[i]);
+                            i = i + 1;
+                        }
+                        send target, eAppendEntries, (term=currentTerm,
+                                                    leader=this,
+                                                    prevLogIndex=lastLogIndex(logs),
+                                                    prevLogTerm=lastLogTerm(logs),
+                                                    entries=entries,
+                                                    leaderCommit=commitIndex);
                     }
                 }
             }
@@ -243,15 +295,13 @@ machine Server {
         var mismatchedTerm: int;
         var i: int;
         var j: int;
-        if (resp.term > currentTerm) {
-            becomeFollower(resp.term);
-        } else if (resp.term < currentTerm) {
+        if (resp.term < currentTerm) {
             send resp.leader, eAppendEntriesReply, (sender=this, term=currentTerm,
-                                                    success=false, firstIndexUnmatched=-1);
+                                                    success=false, matchedIndex=-1);
         } else if (sizeof(logs) <= resp.prevLogIndex) {
             // If the log is very outdated
-            send resp.leader, eAppendEntriesReply, (sender=this, term=currentTerm, success=false, firstIndexUnmatched=sizeof(logs)); 
-        } else if (logs[resp.prevLogIndex].term != resp.prevLogTerm) {
+            send resp.leader, eAppendEntriesReply, (sender=this, term=currentTerm, success=false, matchedIndex=sizeof(logs));
+        } else if (resp.prevLogIndex >= 0 && logs[resp.prevLogIndex].term != resp.prevLogTerm) {
             // Log consistency check failed here;
             // search for the first occurence of the mismatched
             // term and notify the leader.
@@ -261,7 +311,7 @@ machine Server {
                 ptr = ptr - 1;
             }
             send resp.leader, eAppendEntriesReply, (sender=this, term=currentTerm,
-                                                    success=false, firstIndexUnmatched=ptr);
+                                                    success=false, matchedIndex=ptr);
         } else {
             // Check if any entries disagree; delete all entries after it.
             i = resp.prevLogIndex + 1;
@@ -290,7 +340,7 @@ machine Server {
                 }
             }
             executeCommands();
-            send resp.leader, eAppendEntriesReply, (sender=this, term=currentTerm, success=true, firstIndexUnmatched=lastLogIndex(logs) + 1);
+            send resp.leader, eAppendEntriesReply, (sender=this, term=currentTerm, success=true, matchedIndex=lastLogIndex(logs));
         }
     }
     
@@ -339,10 +389,41 @@ machine Server {
         }
     }
 
+    fun leaderCommits() {
+        var execResult: ExecutionResult;
+        var nextCommit: int; // the next commit index
+        var validMatchIndices: int; // the number of match indices that are greater than or equal to nextCommit
+        var i: int;
+        var target: Server;
+        assert this == leader, "Only leader can execute the log on its own";
+        // iteratively search for that index
+        nextCommit = lastLogIndex(logs);
+        while (nextCommit > commitIndex) {
+            // counting itself first
+            validMatchIndices = 1;
+            foreach (target in peers) {
+                if (matchIndex[target] >= nextCommit && logs[nextCommit].term == currentTerm) {
+                    validMatchIndices = validMatchIndices + 1;
+                }
+            }
+            if (validMatchIndices > clusterSize / 2) {
+                break;
+            }
+            nextCommit = nextCommit - 1;
+        }
+        commitIndex = nextCommit;
+        while (lastApplied < commitIndex) {
+            lastApplied = lastApplied + 1;
+            execResult = execute(kvStore, logs[lastApplied].command);
+            kvStore = execResult.newState;
+            send logs[lastApplied].client, eRaftResponse, (client=logs[lastApplied].client, transId=logs[lastApplied].transId, result=execResult.result);
+        }
+    }
+
     fun executeCommands() {
         while (commitIndex > lastApplied) {
             lastApplied = lastApplied + 1;
-            execute(kvStore, logs[lastApplied].command);
+            kvStore = execute(kvStore, logs[lastApplied].command).newState;
         }
     }
 

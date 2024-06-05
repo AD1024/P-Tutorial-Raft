@@ -16,6 +16,14 @@ fun lastLogIndex(log: seq[tServerLog]): int {
     return sizeof(log) - 1;
 }
 
+fun getLogTerm(log: seq[tServerLog], index: int): int {
+    if (index < 0 || index >= sizeof(log)) {
+        return 0;
+    } else {
+        return log[index].term;
+    }
+}
+
 fun lastLogTerm(log: seq[tServerLog]): int {
     if (sizeof(log) == 0) {
         return 0;

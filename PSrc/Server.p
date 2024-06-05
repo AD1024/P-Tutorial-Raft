@@ -266,8 +266,8 @@ machine Server {
                         }
                         send target, eAppendEntries, (term=currentTerm,
                                                     leader=this,
-                                                    prevLogIndex=lastLogIndex(logs),
-                                                    prevLogTerm=lastLogTerm(logs),
+                                                    prevLogIndex=nextIndex[target] - 1,
+                                                    prevLogTerm=getLogTerm(logs, nextIndex[target] - 1),
                                                     entries=entries,
                                                     leaderCommit=commitIndex);
                     }

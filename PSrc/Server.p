@@ -1,5 +1,5 @@
 type ServerId = int;
-type tRaftResponse = (success: bool, result: any);
+type tRaftResponse = (transId: int, success: bool, result: any);
 event eRaftResponse: tRaftResponse;
 
 event eServerInit: (myId: ServerId, cluster: set[Server]);
@@ -82,6 +82,12 @@ machine Server {
             handleRequestVoteRequest(payload);
         }
 
+        on eClientRequest do (payload: tClientRequest) {
+            if (leader != this && leader != null) {
+                send leader, eClientRequest, payload;
+            }
+        }
+
         on eAppendEntries do (payload: tAppendEntries) {
             restartTimer(electionTimer, 150 + choose(150));
         }
@@ -135,6 +141,8 @@ machine Server {
                 goto Follower;
             }
         }
+
+        ignore eClientRequest;
     }
 
     state Leader {
@@ -175,6 +183,12 @@ machine Server {
                 becomeFollower(payload.term);
             } else if (payload.term < currentTerm) {
                 send payload.leader, eRequestVoteReply, (sender=this, term=currentTerm, voteGranted=false);
+            }
+        }
+
+        on eClientRequest do (payload: tClientRequest) {
+            if (payload.cmd.op == GET) {
+                send payload.client, eRaftResponse, (transId=payload.transId, success=true, result=execute(kvStore, payload.cmd));
             }
         }
 

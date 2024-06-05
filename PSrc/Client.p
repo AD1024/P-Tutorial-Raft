@@ -1,16 +1,23 @@
-type tClientRequest = (client: Client, cmd: Command);
+type tClientRequest = (transId: int, client: Client, cmd: Command);
 event eClientRequest: tClientRequest;
 
 machine Client {
     var worklist: seq[Command];
     var servers: set[Server];
     var ptr: int;
+    var tId: int;
+    var currentCmd: Command;
+    var retryTimer: Timer;
+    var retryInterval: int;
 
     start state Init {
-        entry (config: (server_list: set[Server], requests: seq[Command])) {
+        entry (config: (retry_time: int, server_list: set[Server], requests: seq[Command])) {
             worklist = config.requests;
             servers = config.server_list;
             ptr = 0;
+            tId = 0;
+            retryTimer = new Timer(this);
+            retryInterval = config.retry_time;
             goto SendOne;
         }
     }
@@ -21,28 +28,34 @@ machine Client {
             if (sizeof(worklist) == ptr) {
                 goto Done;
             } else {
-                cmd = worklist[ptr];
+                currentCmd = worklist[ptr];
                 ptr = ptr + 1;
-                broadcastRequest(this, cmd);
+                broadcastRequest(this);
+                startTimer(retryTimer, retryInterval);
                 goto WaitForResponse;
             }
         }
     }
 
-    state WaitForResponse {
+    hot state WaitForResponse {
         on eRaftResponse do {
             goto SendOne;
         }
-    }
 
-    fun broadcastRequest(client: Client, cmd: Command) {
-        var s: Server;
-        foreach (s in servers) {
-            send s, eClientRequest, (client=client, cmd=cmd);
+        on eTimerTimeout do {
+            broadcastRequest(this);
+            startTimer(retryTimer, retryInterval);
         }
     }
 
-    state Done {
-        ignore eRaftResponse;
+    fun broadcastRequest(client: Client) {
+        var s: Server;
+        foreach (s in servers) {
+            send s, eClientRequest, (transId=tId, client=client, cmd=currentCmd);
+        }
+    }
+
+    cold state Done {
+        ignore eRaftResponse, eTimerTimeout;
     }
 }

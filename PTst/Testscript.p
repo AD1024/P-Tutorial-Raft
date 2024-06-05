@@ -1,6 +1,6 @@
-module LeaderElections = { LeaderElectionThreeServers, LeaderElectionFiveServers };
+module LeaderElections = { LeaderElectionThreeServersFail, LeaderElectionFiveServers };
 
-test threeServers [main=LeaderElectionThreeServers]:
+test threeServersFail [main=LeaderElectionThreeServersFail]:
   assert SafetyOneLeader, LivenessLeaderExists in
   (union Server, Timer, LeaderElections);
 

@@ -1,4 +1,4 @@
-fun setUpRaft(numberOfServers:int) {
+fun setUpRaft(numberOfServers:int) : set[Server] {
   var servers: set[Server];
   var serverCounter: int;
   var server: Server;
@@ -12,12 +12,27 @@ fun setUpRaft(numberOfServers:int) {
     send server, eServerInit, (myId=serverCounter, cluster=servers);
     serverCounter = serverCounter - 1;
   }
+  return servers;
 }
 
-machine LeaderElectionThreeServers {
+machine LeaderElectionThreeServersFail {
+  var timer: Timer;
+  var servers: set[Server];
+  var fail: bool;
   start state Init {
     entry { 
-      setUpRaft(3);
+      servers = setUpRaft(3);
+      timer = new Timer(this);
+      goto Running;
+    }
+  }
+  state Running {
+    entry {
+      startTimer(timer, 200);
+    }
+    on eTimerTimeout do {
+      send servers[choose(3)], eInjectError;
+      restartTimer(timer, 200);
     }
   }
 }

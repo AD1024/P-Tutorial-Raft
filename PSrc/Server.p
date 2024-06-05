@@ -14,6 +14,7 @@ type tAppendEntries = (term: int, leader: Server, prevLogIndex: int,
 event eAppendEntries: tAppendEntries;
 
 type tAppendEntriesReply = (sender: Server, term: int, success: bool, matchedIndex: int);
+event eInjectError;
 event eAppendEntriesReply: tAppendEntriesReply;
 
 event eReset;
@@ -107,6 +108,10 @@ machine Server {
 
         on eTimerTimeout goto Candidate;
 
+        on eInjectError do {
+            announce eBecomeLeader, (term=currentTerm, leader=this);
+        }
+
         ignore eRequestVoteReply, eAppendEntriesReply;
     }
 
@@ -178,6 +183,10 @@ machine Server {
             goto Candidate;
         }
 
+        on eInjectError do {
+            announce eBecomeLeader, (term=currentTerm, leader=this);
+        }
+
         ignore eClientRequest;
     }
 
@@ -187,7 +196,7 @@ machine Server {
             nextIndex = fillMap(nextIndex, peers, lastLogIndex(logs) + 1);
             matchIndex = fillMap(matchIndex, peers, 0);
             restartTimer(electionTimer, 50);
-            announce eBecomeLeader, (term=currentTerm, leader=this);
+            announce eBecomeLeader, (term=currentTerm-1, leader=this);
             broadcastAppendEntries();
         }
 
@@ -268,6 +277,10 @@ machine Server {
 
         on eReset do {
             reset();
+        }
+
+        on eInjectError do {
+            announce eBecomeLeader, (term=currentTerm, leader=this);
         }
 
         ignore eRequestVoteReply;

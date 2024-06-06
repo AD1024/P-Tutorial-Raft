@@ -11,11 +11,15 @@ machine Client {
     var currentCmd: Command;
     var retryTimer: Timer;
     var retryInterval: int;
+    var randomReset: bool;
 
     start state Init {
-        entry (config: (retry_time: int, server_list: seq[machine], requests: seq[Command])) {
+        entry (config: (retry_time: int, server_list: seq[machine],
+                        requests: seq[Command],
+                        randomReset: bool)) {
             worklist = config.requests;
             servers = config.server_list;
+            randomReset = config.randomReset;
             ptr = 0;
             tId = 0;
             retryTimer = new Timer(this);
@@ -61,7 +65,19 @@ machine Client {
     fun broadcastToCluster() {
         var s: machine;
         var i: int;
+        var failLeader: bool;
+        if (choose(100) < 50 && randomReset) {
+            failLeader = true;
+        } else {
+            failLeader = false;
+        }
         while (i < sizeof(servers)) {
+            if (failLeader) {
+                send servers[i], eLeaderReset;
+            }
+            if (choose(100) < 10 && randomReset) {
+                send servers[i], eReset;
+            }
             send servers[i], eClientRequest, (transId=tId, client=this, cmd=currentCmd);
         }
     }

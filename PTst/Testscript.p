@@ -2,7 +2,11 @@ module LeaderElections = { LeaderElectionThreeServersFail, LeaderElectionFiveSer
 module ServingTests = { OneClientOneServerReliable,
                         OneClientOneServerUnreliable,
                         OneClientFiveServersReliable,
-                        OneClienFiveServersUnreliable};
+                        OneClienFiveServersUnreliable,
+                        ThreeClientsFiveServersReliable,
+                        ThreeClientsFiveServersUnreliable,
+                        ThreeClientsOneServerReliable,
+                        OneClientOneServerRandomCrashReliable};
 
 test threeServersFail [main=LeaderElectionThreeServersFail]:
   assert SafetyOneLeader, LivenessLeaderExists in
@@ -26,5 +30,17 @@ test oneClientFiveServersReliable [main=OneClientFiveServersReliable]:
   (union Server, Timer, Client, ServerWrapper, ServingTests);
 
 test oneClientFiveServersUnreliable [main=OneClienFiveServersUnreliable]:
+  assert SafetyOneLeader, LivenessLeaderExists, LivenessProgress, SafetySynchronization in
+  (union Server, Timer, Client, ServerWrapper, ServingTests);
+
+test threeClientsOneServerReliable [main=ThreeClientsOneServerReliable]:
+  assert SafetyOneLeader, LivenessLeaderExists, LivenessProgress, SafetySynchronization in
+  (union Server, Timer, Client, ServerWrapper, ServingTests);
+
+test threeClientsFiveServersReliable [main=ThreeClientsFiveServersReliable]:
+  assert SafetyOneLeader, LivenessLeaderExists, LivenessProgress, SafetySynchronization in
+  (union Server, Timer, Client, ServerWrapper, ServingTests);
+
+test threeClientsFiveServersUnreliable [main=ThreeClientsFiveServersUnreliable]:
   assert SafetyOneLeader, LivenessLeaderExists, LivenessProgress, SafetySynchronization in
   (union Server, Timer, Client, ServerWrapper, ServingTests);

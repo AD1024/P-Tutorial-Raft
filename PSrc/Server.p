@@ -17,6 +17,7 @@ type tAppendEntriesReply = (sender: Server, term: int, success: bool, matchedInd
 event eInjectError;
 event eAppendEntriesReply: tAppendEntriesReply;
 
+event eLeaderReset;
 event eReset;
 
 type tServerLog = (term: int, command: Command, client: Client, transId: int);
@@ -81,7 +82,7 @@ machine Server {
         entry {
             restartTimer(electionTimer, 100 + choose(50));
             leader = null as Server;
-            votedFor = null as Server;
+            // votedFor = null as Server;
         }
 
         on eReset do {
@@ -114,7 +115,7 @@ machine Server {
             announce eBecomeLeader, (term=currentTerm, leader=this);
         }
 
-        ignore eRequestVoteReply, eAppendEntriesReply;
+        ignore eRequestVoteReply, eAppendEntriesReply, eLeaderReset;
     }
 
     state Candidate {
@@ -139,13 +140,13 @@ machine Server {
         }
 
         on eAppendEntries do (payload: tAppendEntries) {
-            if (payload.term >= currentTerm) {
+            if (payload.term > currentTerm) {
                 currentTerm = payload.term;
                 votedFor = null as Server;
                 handleAppendEntries(payload);
                 goto Follower;
             } else {
-                send payload.leader, eAppendEntriesReply, (sender=this, term=currentTerm, success=false, matchedIndex=-1);
+                handleAppendEntries(payload);
             }
         }
 
@@ -161,7 +162,7 @@ machine Server {
             if (payload.term > currentTerm) {
                 currentTerm = payload.term;
                 goto Follower;
-            } else if (payload.voteGranted) {
+            } else if (payload.voteGranted && payload.term == currentTerm) {
                 votesReceived += (payload.sender);
                 if (sizeof(votesReceived) > clusterSize / 2) {
                     goto Leader;
@@ -174,6 +175,8 @@ machine Server {
                 currentTerm = payload.term;
                 handleRequestVote(payload);
                 goto Follower;
+            } else {
+                send payload.candidate, eRequestVoteReply, (sender=this, term=currentTerm, voteGranted=false);
             }
         }
 
@@ -189,7 +192,7 @@ machine Server {
             announce eBecomeLeader, (term=currentTerm, leader=this);
         }
 
-        ignore eClientRequest;
+        ignore eClientRequest, eLeaderReset;
     }
 
     state Leader {
@@ -281,7 +284,7 @@ machine Server {
             leaderCommits();
         }
 
-        on eReset do {
+        on eLeaderReset do {
             reset();
         }
 
@@ -289,7 +292,7 @@ machine Server {
             announce eBecomeLeader, (term=currentTerm, leader=this);
         }
 
-        ignore eRequestVoteReply;
+        ignore eRequestVoteReply, eReset;
     }
 
     fun handleRequestVote(reply: tRequestVote) {

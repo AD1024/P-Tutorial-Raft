@@ -34,17 +34,17 @@ machine LeaderElectionThreeServersFail {
   start state Init {
     entry { 
       servers = setUpRaft(3);
-      timer = new Timer(this);
+      timer = new Timer((user=this, timeoutEvent=eHeartbeatTimeout));
       goto Running;
     }
   }
   state Running {
     entry {
-      startTimer(timer, 200);
+      startTimer(timer);
     }
-    on eTimerTimeout do {
+    on eHeartbeatTimeout do {
       send servers[choose(3)], eInjectError;
-      restartTimer(timer, 200);
+      restartTimer(timer);
     }
   }
 }

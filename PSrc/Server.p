@@ -17,7 +17,6 @@ type tAppendEntriesReply = (sender: Server, term: int, success: bool, matchedInd
 event eInjectError;
 event eAppendEntriesReply: tAppendEntriesReply;
 
-event eLeaderReset;
 event eReset;
 
 type tServerLog = (term: int, command: Command, client: Client, transId: int);
@@ -31,6 +30,7 @@ type tAppendEntriesRequest = (
 
 machine Server {
     var serverId: ServerId;
+    var crashRate: int;
     var kvStore: KVStore;
     var leader: machine;
     var clusterSize: int;
@@ -52,7 +52,9 @@ machine Server {
     var commitIndex: int;
     var lastApplied: int;
 
-    var electionTimer: Timer;
+    // var electionTimer: Timer;
+    // var heartbeatTimer: Timer;
+    var clientRequestQueue: seq[tClientRequest];
 
     start state Init {
         entry {}
@@ -65,6 +67,7 @@ machine Server {
             matchIndex = default(map[Server, int]);
             votesReceived = default(set[Server]);
             logs = default(seq[tServerLog]);
+            clientRequestQueue = default(seq[tClientRequest]);
             // executionResults = default(map[Client, map[int, Result]]);
 
             currentTerm = 0;
@@ -72,7 +75,8 @@ machine Server {
             commitIndex = -1;
             lastApplied = -1;
             leader = null as Server;
-            electionTimer = new Timer(this);
+            // electionTimer = new Timer((user=this, timeoutEvent=eElectionTimeout));
+            // heartbeatTimer = new Timer((user=this, timeoutEvent=eHeartbeatTimeout));
             goto Follower;
         }
         ignore eReset;
@@ -80,9 +84,13 @@ machine Server {
 
     state Follower {
         entry {
-            restartTimer(electionTimer, 100 + choose(50));
+            // restartTimer(electionTimer);
             leader = null as Server;
             // votedFor = null as Server;
+        }
+
+        on eShutdown do {
+            goto FinishedServing;
         }
 
         on eReset do {
@@ -94,35 +102,43 @@ machine Server {
         }
 
         on eClientRequest do (payload: tClientRequest) {
-            if (leader != this && leader != null) {
+            if (leader != null) {
                 send leader, eClientRequest, payload;
+            } else {
+                clientRequestQueue += (sizeof(clientRequestQueue), payload);
             }
         }
 
         on eAppendEntries do (payload: tAppendEntries) {
-            cancelTimer(electionTimer);
+            // cancelTimer(electionTimer);
             if (payload.term > currentTerm) {
                 votedFor = null as Server;
                 currentTerm = payload.term;
             }
             handleAppendEntries(payload);
-            restartTimer(electionTimer, 100 + choose(50));
+            if (leader == null) {
+                while (sizeof(clientRequestQueue) > 0) {
+                    send this, eClientRequest, clientRequestQueue[0];
+                    clientRequestQueue -= (0);
+                }
+            }
+            // restartTimer(electionTimer);
         }
 
-        on eTimerTimeout goto Candidate;
+        on eElectionTimeout goto Candidate;
 
         on eInjectError do {
             announce eBecomeLeader, (term=currentTerm, leader=this);
         }
 
-        ignore eRequestVoteReply, eAppendEntriesReply, eLeaderReset;
+        ignore eRequestVoteReply, eAppendEntriesReply, eHeartbeatTimeout;
     }
 
     state Candidate {
         entry {
             var peer: Server;
             var lastTerm: int;
-            cancelTimer(electionTimer);
+            // cancelTimer(electionTimer);
             currentTerm = currentTerm + 1;
             votedFor = null as Server;
             votesReceived = default(set[Server]);
@@ -136,7 +152,15 @@ machine Server {
                                         lastLogIndex=lastLogIndex(logs),
                                         lastLogTerm=lastLogTerm(logs)));
             }
-            startTimer(electionTimer, 100 + choose(50));
+            // startTimer(electionTimer);
+        }
+
+        on eClientRequest do (payload: tClientRequest) {
+            clientRequestQueue += (sizeof(clientRequestQueue), payload);
+        }
+
+        on eShutdown do {
+            goto FinishedServing;
         }
 
         on eAppendEntries do (payload: tAppendEntries) {
@@ -184,7 +208,7 @@ machine Server {
             reset();
         }
 
-        on eTimerTimeout do {
+        on eElectionTimeout do {
             goto Candidate;
         }
 
@@ -192,7 +216,7 @@ machine Server {
             announce eBecomeLeader, (term=currentTerm, leader=this);
         }
 
-        ignore eClientRequest, eLeaderReset;
+        ignore eHeartbeatTimeout;
     }
 
     state Leader {
@@ -200,9 +224,17 @@ machine Server {
             leader = this;
             nextIndex = fillMap(nextIndex, peers, lastLogIndex(logs) + 1);
             matchIndex = fillMap(matchIndex, peers, 0);
-            restartTimer(electionTimer, 20);
+            // restartTimer(heartbeatTimer);
             announce eBecomeLeader, (term=currentTerm, leader=this);
+            while (sizeof(clientRequestQueue) > 0) {
+                send this, eClientRequest, clientRequestQueue[0];
+                clientRequestQueue -= (0);
+            }
             broadcastAppendEntries();
+        }
+
+        on eShutdown do {
+            goto FinishedServing;
         }
 
         on eRequestVote do (payload: tRequestVote) {
@@ -213,7 +245,7 @@ machine Server {
             }
         }
 
-        on eTimerTimeout do {
+        on eHeartbeatTimeout do {
             broadcastAppendEntries();
         }
 
@@ -254,7 +286,7 @@ machine Server {
             var i: int;
             // print format("Received client request {0}", payload);
             if (payload.cmd.op == GET) {
-                // print format("Server processed (by {0}) request {1}", this, payload);
+                print format("Server processed (by {0}) request {1}", this, payload);
                 send payload.client, eRaftResponse, (client=payload.client,
                                                      transId=payload.transId,
                                                      result=execute(kvStore, payload.cmd).result);
@@ -263,6 +295,7 @@ machine Server {
                 if (!(newEntry in logs)) {
                     logs += (lastLogIndex(logs) + 1, newEntry);
                 }
+                // print format("Current logs: {0}", logs);
                 // use info of nextIndex and matchIndex to broadcast to peers
                 foreach (target in peers) {
                     if (target != this && nextIndex[target] <= lastLogIndex(logs)) {
@@ -284,7 +317,7 @@ machine Server {
             leaderCommits();
         }
 
-        on eLeaderReset do {
+        on eReset do {
             reset();
         }
 
@@ -292,7 +325,16 @@ machine Server {
             announce eBecomeLeader, (term=currentTerm, leader=this);
         }
 
-        ignore eRequestVoteReply, eReset;
+        ignore eRequestVoteReply, eElectionTimeout;
+    }
+
+    state FinishedServing {
+        entry {
+            print format("{0} is shutting down", this);
+            // send electionTimer, eShutdown;
+            // send heartbeatTimer, eShutdown;
+        }
+        ignore eShutdown, eRequestVote, eRequestVoteReply, eAppendEntries, eAppendEntriesReply, eClientRequest, eHeartbeatTimeout, eElectionTimeout;
     }
 
     fun handleRequestVote(reply: tRequestVote) {
@@ -322,11 +364,13 @@ machine Server {
                                                     success=false, matchedIndex=-1);
         } else if (sizeof(logs) <= resp.prevLogIndex) {
             // If the log is very outdated
+            leader = resp.leader;
             send resp.leader, eAppendEntriesReply, (sender=this, term=currentTerm, success=false, matchedIndex=sizeof(logs));
         } else if (resp.prevLogIndex >= 0 && logs[resp.prevLogIndex].term != resp.prevLogTerm) {
             // Log consistency check failed here;
             // search for the first occurence of the mismatched
             // term and notify the leader.
+            leader = resp.leader;
             ptr = resp.prevLogIndex;
             mismatchedTerm = logs[ptr].term;
             while (ptr > 0 && logs[ptr].term == mismatchedTerm) {
@@ -336,6 +380,7 @@ machine Server {
                                                     success=false, matchedIndex=ptr);
         } else {
             // Check if any entries disagree; delete all entries after it.
+            leader = resp.leader;
             i = resp.prevLogIndex + 1;
             j = 0;
             while (i < sizeof(logs) && j < sizeof(resp.entries)) {
@@ -409,7 +454,7 @@ machine Server {
                 }
             }
         }
-        restartTimer(electionTimer, 20);
+        // restartTimer(heartbeatTimer);
     }
 
     fun leaderCommits() {
@@ -439,7 +484,7 @@ machine Server {
             lastApplied = lastApplied + 1;
             execResult = execute(kvStore, logs[lastApplied].command);
             kvStore = execResult.newState;
-            // print format("Server committed and processed (by {0}), log: {1}", this, logs[lastApplied]);
+            print format("Server committed and processed (by {0}), log: {1}", this, logs[lastApplied]);
             send logs[lastApplied].client, eRaftResponse, (client=logs[lastApplied].client, transId=logs[lastApplied].transId, result=execResult.result);
         }
     }
@@ -462,7 +507,7 @@ machine Server {
     }
 
     fun becomeFollower(term: int) {
-        cancelTimer(electionTimer);
+        // cancelTimer(electionTimer);
         currentTerm = term;
         goto Follower;
     }

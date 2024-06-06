@@ -2,6 +2,7 @@ type tClientRequest = (transId: int, client: Client, cmd: Command);
 event eClientRequest: tClientRequest;
 event eClientWaitingResponse: (client: Client, transId: int);
 event eClientGotResponse: (client: Client, transId: int);
+event eClientFinished: Client;
 
 machine Client {
     var worklist: seq[Command];
@@ -9,21 +10,15 @@ machine Client {
     var ptr: int;
     var tId: int;
     var currentCmd: Command;
-    var retryTimer: Timer;
-    var retryInterval: int;
-    var randomReset: bool;
+    var view: View;
 
     start state Init {
-        entry (config: (retry_time: int, server_list: seq[machine],
-                        requests: seq[Command],
-                        randomReset: bool)) {
+        entry (config: (retry_time: int, viewService: View, server_list: seq[machine], requests: seq[Command])) {
             worklist = config.requests;
             servers = config.server_list;
-            randomReset = config.randomReset;
+            view = config.viewService;
             ptr = 0;
             tId = 0;
-            retryTimer = new Timer(this);
-            retryInterval = config.retry_time;
             goto SendOne;
         }
     }
@@ -31,11 +26,14 @@ machine Client {
     state SendOne {
         entry {
             var cmd: Command;
+            print format("{0} is at {1}", this, ptr);
+            print format("Worklist {0}", worklist);
             if (sizeof(worklist) == ptr) {
                 goto Done;
             } else {
                 currentCmd = worklist[ptr];
                 ptr = ptr + 1;
+                tId = tId + 1;
                 broadcastToCluster();
                 goto WaitForResponse;
             }
@@ -44,45 +42,32 @@ machine Client {
 
     state WaitForResponse {
         entry {
-            startTimer(retryTimer, retryInterval);
             announce eClientWaitingResponse, (client=this, transId=tId);
         }
 
         on eRaftResponse do (resp: tRaftResponse) {
+            print format("Client {0} got response {1}", this, resp.transId);
             if (resp.transId == tId) {
                 announce eClientGotResponse, (client=this, transId=tId);
-                tId = tId + 1;
                 goto SendOne;
             }
-        }
-
-        on eTimerTimeout do {
-            broadcastToCluster();
-            goto WaitForResponse;
         }
     }
 
     fun broadcastToCluster() {
         var s: machine;
         var i: int;
-        var failLeader: bool;
-        if (choose(100) < 50 && randomReset) {
-            failLeader = true;
-        } else {
-            failLeader = false;
-        }
         while (i < sizeof(servers)) {
-            if (failLeader) {
-                send servers[i], eLeaderReset;
-            }
-            if (choose(100) < 10 && randomReset) {
-                send servers[i], eReset;
-            }
             send servers[i], eClientRequest, (transId=tId, client=this, cmd=currentCmd);
+            i = i + 1;
         }
     }
 
     state Done {
-        ignore eRaftResponse, eTimerTimeout;
+        entry {
+            announce eClientFinished, this;
+            send view, eClientFinished, this;
+        }
+        ignore eRaftResponse, eHeartbeatTimeout;
     }
 }

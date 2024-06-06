@@ -149,6 +149,7 @@ fun randomWorkload(numCmd: int): seq[Command] {
             key = choose(puts);
         } else {
             key = choose(1024);
+            puts += (key);
         }
         if ($) {
             // PUT
@@ -165,45 +166,67 @@ fun randomWorkload(numCmd: int): seq[Command] {
 machine OneClientOneServerReliable {
     var client: Client;
     var servers: seq[machine];
+    var viewService: View;
 
     start state Init {
         entry {
+            servers = setUpCluster(1, (delayInterval=0, dropRate=0, reorderRate=0, duplicateRate=0));
+            viewService = new View((servers=servers, numClients=1, timeoutRate=0, crashRate=0));
             client = new Client((retry_time=30,
-                server_list=setUpCluster(1, (delayInterval=0, dropRate=0, reorderRate=0, duplicateRate=0)),
-                requests=randomWorkload(5), randomReset=false));
+                viewService=viewService,
+                server_list=servers,
+                requests=randomWorkload(5)));
         }
     }
 }
 
 machine OneClientOneServerUnreliable {
     var client: Client;
+    var servers: seq[machine];
+    var viewService: View;
 
     start state Init {
         entry {
+            servers = setUpCluster(1, (delayInterval=3, dropRate=40, reorderRate=10, duplicateRate=5));
+            viewService = new View((servers=servers, numClients=1, timeoutRate=0, crashRate=0));
             client = new Client((retry_time=30,
-                server_list=setUpCluster(1, (delayInterval=3, dropRate=40, reorderRate=10, duplicateRate=5)),
-                requests=randomWorkload(5), randomReset=false));
+                viewService=viewService,
+                server_list=servers,
+                requests=randomWorkload(5)));
         }
     }
 }
 
 machine OneClientFiveServersReliable {
     var client: Client;
+    var servers: seq[machine];
+    var viewService: View;
 
     start state Init {
         entry {
-            client = new Client((retry_time=30, server_list=setUpCluster(5, (delayInterval=0, dropRate=0, reorderRate=0, duplicateRate=0)),
-                        requests=randomWorkload(10), randomReset=false));
+            servers = setUpCluster(5, (delayInterval=0, dropRate=0, reorderRate=0, duplicateRate=0));
+            viewService = new View((servers=servers, numClients=1, timeoutRate=0, crashRate=0));
+            client = new Client((retry_time=30,
+                        viewService=viewService,
+                        server_list=servers,
+                        requests=randomWorkload(10)));
         }
     }
 }
 
 machine OneClienFiveServersUnreliable {
     var client: Client;
+    var servers: seq[machine];
+    var viewService: View;
+
     start state Init {
         entry {
-            client = new Client((retry_time=30, server_list=setUpCluster(5, (delayInterval=3, dropRate=40, reorderRate=40, duplicateRate=40)),
-                        requests=randomWorkload(10), randomReset=false));
+            servers = setUpCluster(5, (delayInterval=3, dropRate=40, reorderRate=40, duplicateRate=40));
+            viewService = new View((servers=servers, numClients=1, timeoutRate=0, crashRate=0));
+            client = new Client((retry_time=30,
+                        viewService=viewService, 
+                        server_list=servers,
+                        requests=randomWorkload(10)));
         }
     }
 }
@@ -213,16 +236,24 @@ machine ThreeClientsOneServerReliable {
     var client2: Client;
     var client3: Client;
     var servers: seq[machine];
+    var viewService: View;
 
     start state Init {
         entry {
             servers = setUpCluster(5, (delayInterval=0, dropRate=0, reorderRate=0, duplicateRate=0));
-            client1 = new Client((retry_time=30, server_list=servers,
-                        requests=randomWorkload(5), randomReset=false));
-            client2 = new Client((retry_time=30, server_list=servers,
-                        requests=randomWorkload(5), randomReset=false));
-            client3 = new Client((retry_time=30, server_list=servers,
-                        requests=randomWorkload(5), randomReset=false));
+            viewService = new View((servers=servers, numClients=3, timeoutRate=0, crashRate=0));
+            client1 = new Client((retry_time=30,
+                        viewService=viewService,
+                        server_list=servers,
+                        requests=randomWorkload(5)));
+            client2 = new Client((retry_time=30,
+                        viewService=viewService,
+                        server_list=servers,
+                        requests=randomWorkload(5)));
+            client3 = new Client((retry_time=30,
+                        viewService=viewService,
+                        server_list=servers,
+                        requests=randomWorkload(5)));
         }
     }
 }
@@ -232,16 +263,24 @@ machine ThreeClientsFiveServersReliable {
     var client2: Client;
     var client3: Client;
     var servers: seq[machine];
+    var viewService: View;
 
     start state Init {
         entry {
             servers = setUpCluster(5, (delayInterval=0, dropRate=0, reorderRate=0, duplicateRate=0));
-            client1 = new Client((retry_time=30, server_list=servers,
-                        requests=randomWorkload(5), randomReset=false));
-            client2 = new Client((retry_time=30, server_list=servers,
-                        requests=randomWorkload(5), randomReset=false));
-            client3 = new Client((retry_time=30, server_list=servers,
-                        requests=randomWorkload(5), randomReset=false));
+            viewService = new View((servers=servers, numClients=3, timeoutRate=0, crashRate=0));
+            client1 = new Client((retry_time=30,
+                        viewService=viewService,
+                        server_list=servers,
+                        requests=randomWorkload(5)));
+            client2 = new Client((retry_time=30,
+                        viewService=viewService,
+                        server_list=servers,
+                        requests=randomWorkload(5)));
+            client3 = new Client((retry_time=30,
+                        viewService=viewService,
+                        server_list=servers,
+                        requests=randomWorkload(5)));
         }
     }
 }
@@ -251,28 +290,41 @@ machine ThreeClientsFiveServersUnreliable {
     var client2: Client;
     var client3: Client;
     var servers: seq[machine];
+    var viewService: View;
 
     start state Init {
         entry {
             servers = setUpCluster(5, (delayInterval=3, dropRate=40, reorderRate=40, duplicateRate=40));
-            client1 = new Client((retry_time=30, server_list=servers,
-                        requests=randomWorkload(5), randomReset=false));
-            client2 = new Client((retry_time=30, server_list=servers,
-                        requests=randomWorkload(5), randomReset=false));
-            client3 = new Client((retry_time=30, server_list=servers,
-                        requests=randomWorkload(5), randomReset=false));
+            viewService = new View((servers=servers, numClients=3, timeoutRate=0, crashRate=0));
+            client1 = new Client((retry_time=30,
+                        viewService=viewService,
+                        server_list=servers,
+                        requests=randomWorkload(5)));
+            client2 = new Client((retry_time=30,
+                        viewService=viewService,
+                        server_list=servers,
+                        requests=randomWorkload(5)));
+            client3 = new Client((retry_time=30,
+                        viewService=viewService,
+                        server_list=servers,
+                        requests=randomWorkload(5)));
         }
     }
 }
 
 machine OneClientOneServerRandomCrashReliable {
     var client: Client;
+    var servers: seq[machine];
+    var viewService: View;
 
     start state Init {
         entry {
+            servers = setUpCluster(1, (delayInterval=0, dropRate=0, reorderRate=0, duplicateRate=0));
+            viewService = new View((servers=servers, numClients=1, timeoutRate=0, crashRate=50));
             client = new Client((retry_time=30,
-                server_list=setUpCluster(1, (delayInterval=0, dropRate=0, reorderRate=0, duplicateRate=0)),
-                requests=randomWorkload(5), randomReset=true));
+                viewService=viewService,
+                server_list=servers,
+                requests=randomWorkload(5)));
         }
     }
 }

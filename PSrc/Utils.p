@@ -1,15 +1,15 @@
 // Some utility functions
-fun startTimer(timer: Timer, timeout: int) {
-    send timer, eStartTimer, timeout;
+fun startTimer(timer: Timer) {
+    send timer, eStartTimer;
 }
 
 fun cancelTimer(timer: Timer) {
     send timer, eCancelTimer;
 }
 
-fun restartTimer(timer: Timer, timeout: int) {
+fun restartTimer(timer: Timer) {
     cancelTimer(timer);
-    startTimer(timer, timeout);
+    startTimer(timer);
 }
 
 fun lastLogIndex(log: seq[tServerLog]): int {

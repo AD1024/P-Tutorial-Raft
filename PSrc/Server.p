@@ -2,7 +2,7 @@ type ServerId = int;
 type tRaftResponse = (client: Client, transId: int, result: any);
 event eRaftResponse: tRaftResponse;
 
-event eServerInit: (myId: ServerId, cluster: set[Server]);
+event eServerInit: (myId: ServerId, cluster: set[machine]);
 
 type tRequestVote = (term: int, candidate: Server, lastLogIndex: int, lastLogTerm: int);
 event eRequestVote: tRequestVote;
@@ -31,14 +31,14 @@ type tAppendEntriesRequest = (
 machine Server {
     var serverId: ServerId;
     var kvStore: KVStore;
-    var leader: Server;
+    var leader: machine;
     var clusterSize: int;
-    var peers: set[Server];
+    var peers: set[machine];
     // var executionResults: map[Client, map[int, Result]];
 
     // Leader state (volatile)
-    var nextIndex: map[Server, int];
-    var matchIndex: map[Server, int];
+    var nextIndex: map[machine, int];
+    var matchIndex: map[machine, int];
 
     // Leader state (persistent)
     var currentTerm: int;
@@ -55,7 +55,7 @@ machine Server {
 
     start state Init {
         entry {}
-        on eServerInit do (setup: (myId: ServerId, cluster: set[Server])) {
+        on eServerInit do (setup: (myId: ServerId, cluster: set[machine])) {
             kvStore = newStore();
             serverId = setup.myId;
             clusterSize = sizeof(setup.cluster);
@@ -245,7 +245,7 @@ machine Server {
 
         on eClientRequest do (payload: tClientRequest) {
             var newEntry: tServerLog;
-            var target: Server;
+            var target: machine;
             var entries: seq[tServerLog];
             var i: int;
             if (payload.cmd.op == GET) {
@@ -360,7 +360,7 @@ machine Server {
     }
     
     fun broadcastAppendEntries() {
-        var target: Server;
+        var target: machine;
         var i: int;
         var j: int;
         var prevIndex: int;
@@ -410,7 +410,7 @@ machine Server {
         var nextCommit: int; // the next commit index
         var validMatchIndices: int; // the number of match indices that are greater than or equal to nextCommit
         var i: int;
-        var target: Server;
+        var target: machine;
         assert this == leader, "Only leader can execute the log on its own";
         // iteratively search for that index
         nextCommit = lastLogIndex(logs);

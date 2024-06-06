@@ -2,10 +2,10 @@ enum Op {
     PUT,
     GET
 }
-type Command = (op: Op, key: string, value: any);
+type Command = (op: Op, key: any, value: any);
 type Result = (success: bool, value: any);
 type ExecutionResult = (newState: KVStore, result: Result);
-type KVStore = map[string, any];
+type KVStore = map[any, any];
 
 fun newStore(): KVStore {
     return default(KVStore);

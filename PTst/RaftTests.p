@@ -1,3 +1,11 @@
+module ServerWrapper = { ServerInterface };
+// Network configuration:
+// - delayInterval: the delay for [0, delayInterval) messages for each message
+// - dropRate: the probability of a message being dropped (0-100)
+// - reorderRate: the probability of a message being reordered (0-100)
+// - duplicateRate: the probability of a message being duplicated (0-100)
+type NetworkConfig = (delayInterval: int, dropRate: int, reorderRate: int, duplicateRate: int);
+
 machine ServerInterface {
     var delayInterval: int;
     var dropRate: int;
@@ -78,6 +86,8 @@ machine ServerInterface {
         if (choose(100) < duplicateRate) {
             numDups = choose(3);
         }
+        assert false;
+        print format("Sending {0} to {1} with payload {2}", e, server, payload);
         send server, e, payload;
         while (numDups > 0) {
             send server, e, payload;
@@ -86,28 +96,98 @@ machine ServerInterface {
     }
 }
 
-fun setUpCluster(numServers: int, delayInterval: int,
-                 dropRate: int, reorderRate: int, duplicateRate: int): set[ServerInterface] {
-    var servers: set[Server];
+fun setUpCluster(numServers: int, networkCfg: NetworkConfig): seq[machine] {
+    var servers: seq[Server];
     var interfaces: set[ServerInterface];
     var server: Server;
     var serverInterface: ServerInterface;
     var i: int;
-    servers = default(set[Server]);
+    var j: int;
+    servers = default(seq[Server]);
     interfaces = default(set[ServerInterface]);
     i = 0;
     while (i < numServers) {
-        server = new Server();
-        serverInterface = new ServerInterface((server=server, delayInterval=delayInterval,
-                                               dropRate=dropRate, reorderRate=reorderRate, duplicateRate=duplicateRate));
-        servers += (server);
-        interfaces += (serverInterface);
+        servers += (i, new Server());
+        i = i + 1;
     }
     i = 0;
-    foreach (server in servers) {
-        send server, eServerInit, (myId=i, cluster=interfaces);
+    j = 0;
+    while (i < numServers) {
+        interfaces = default(set[ServerInterface]);
+        while (j < numServers) {
+            if (i != j) {
+                serverInterface = new ServerInterface((server=servers[j],
+                    delayInterval=networkCfg.delayInterval,
+                    dropRate=networkCfg.dropRate, reorderRate=networkCfg.reorderRate,
+                    duplicateRate=networkCfg.duplicateRate));
+                interfaces += (serverInterface);
+            }
+            j = j + 1;
+        }
+        send servers[i], eServerInit, (myId=i, cluster=interfaces);
         i = i + 1;
     }
 
-    return interfaces;
+    return servers;
 }
+
+fun randomWorkload(numCmd: int): seq[Command] {
+    var cmds: seq[Command];
+    var puts: set[int];
+    var i: int;
+    var key: int;
+    assert numCmd <= 100, "Too many commands!";
+    cmds = default(seq[Command]);
+    puts = default(set[int]);
+    i = 0;
+    while (i < numCmd) {
+        // choose an existing key or a new key
+        // non-deterministically
+        if (sizeof(puts) > 0 && $) {
+            key = choose(puts);
+        } else {
+            key = choose(1024);
+        }
+        if ($) {
+            // PUT
+            cmds += (i, (op=PUT, key=key, value=choose(1024)));
+        } else {
+            // GET
+            cmds += (i, (op=GET, key=key, value=null));
+        }
+        i = i + 1;
+    }
+    return cmds;
+}
+
+machine OneClientOneServerReliable {
+    var client: Client;
+    var servers: seq[machine];
+
+    start state Init {
+        entry {
+            servers = setUpCluster(1, (delayInterval=0, dropRate=0, reorderRate=0, duplicateRate=0));
+            client = new Client((retry_time=30, server_list=servers, requests=randomWorkload(5)));
+        }
+    }
+}
+
+machine OneClientOneServerUnreliableNetwork {
+    var client: Client;
+    var servers: seq[machine];
+
+    start state Init {
+        entry {
+            servers = setUpCluster(1, (delayInterval=3, dropRate=10, reorderRate=10, duplicateRate=5));
+            client = new Client((retry_time=30, server_list=servers, requests=randomWorkload(5)));
+        }
+    }
+}
+
+// machine OneClientFiveServersReliable {
+//     start state Init {
+//         entry {
+
+//         }
+//     }
+// }

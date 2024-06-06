@@ -3,7 +3,7 @@ event eClientRequest: tClientRequest;
 
 machine Client {
     var worklist: seq[Command];
-    var servers: set[Server];
+    var servers: seq[machine];
     var ptr: int;
     var tId: int;
     var currentCmd: Command;
@@ -11,7 +11,7 @@ machine Client {
     var retryInterval: int;
 
     start state Init {
-        entry (config: (retry_time: int, server_list: set[Server], requests: seq[Command])) {
+        entry (config: (retry_time: int, server_list: seq[machine], requests: seq[Command])) {
             worklist = config.requests;
             servers = config.server_list;
             ptr = 0;
@@ -31,13 +31,16 @@ machine Client {
                 currentCmd = worklist[ptr];
                 ptr = ptr + 1;
                 broadcastToCluster();
-                startTimer(retryTimer, retryInterval);
                 goto WaitForResponse;
             }
         }
     }
 
-    hot state WaitForResponse {
+    state WaitForResponse {
+        entry {
+            startTimer(retryTimer, retryInterval);
+        }
+
         on eRaftResponse do (resp: tRaftResponse) {
             if (resp.transId == tId) {
                 tId = tId + 1;
@@ -47,18 +50,18 @@ machine Client {
 
         on eTimerTimeout do {
             broadcastToCluster();
-            startTimer(retryTimer, retryInterval);
+            goto WaitForResponse;
         }
     }
 
     fun broadcastToCluster() {
-        var s: Server;
+        var s: machine;
         foreach (s in servers) {
             send s, eClientRequest, (transId=tId, client=this, cmd=currentCmd);
         }
     }
 
-    cold state Done {
+    state Done {
         ignore eRaftResponse, eTimerTimeout;
     }
 }

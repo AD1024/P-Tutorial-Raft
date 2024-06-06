@@ -198,7 +198,7 @@ machine Server {
             nextIndex = fillMap(nextIndex, peers, lastLogIndex(logs) + 1);
             matchIndex = fillMap(matchIndex, peers, 0);
             restartTimer(electionTimer, 20);
-            announce eBecomeLeader, (term=currentTerm-1, leader=this);
+            announce eBecomeLeader, (term=currentTerm, leader=this);
             broadcastAppendEntries();
         }
 
@@ -221,6 +221,7 @@ machine Server {
                 becomeFollower(payload.term);
             } else if (payload.term < currentTerm) {
                 send payload.leader, eRequestVoteReply, (sender=this, term=currentTerm, voteGranted=false);
+                leaderCommits();
             }
         }
 
@@ -248,7 +249,9 @@ machine Server {
             var target: machine;
             var entries: seq[tServerLog];
             var i: int;
+            // print format("Received client request {0}", payload);
             if (payload.cmd.op == GET) {
+                // print format("Server processed (by {0}) request {1}", this, payload);
                 send payload.client, eRaftResponse, (client=payload.client,
                                                      transId=payload.transId,
                                                      result=execute(kvStore, payload.cmd).result);
@@ -275,6 +278,7 @@ machine Server {
                     }
                 }
             }
+            leaderCommits();
         }
 
         on eReset do {
@@ -432,6 +436,7 @@ machine Server {
             lastApplied = lastApplied + 1;
             execResult = execute(kvStore, logs[lastApplied].command);
             kvStore = execResult.newState;
+            // print format("Server committed and processed (by {0}), log: {1}", this, logs[lastApplied]);
             send logs[lastApplied].client, eRaftResponse, (client=logs[lastApplied].client, transId=logs[lastApplied].transId, result=execResult.result);
         }
     }

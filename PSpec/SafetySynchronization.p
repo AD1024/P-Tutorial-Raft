@@ -12,10 +12,13 @@ spec SafetySynchronization observes eClientRequest, eRaftResponse {
 
     state Listening {
         on eClientRequest do (payload: tClientRequest) {
+            var execResult: ExecutionResult;
             if (!(payload.client in keys(requestResultMap))) {
                 requestResultMap[payload.client] = default(map[int, Result]);
             }
-            requestResultMap[payload.client][payload.transId] = execute(localKVStore, payload.cmd).result;
+            execResult = execute(localKVStore, payload.cmd);
+            requestResultMap[payload.client][payload.transId] = execResult.result;
+            localKVStore = execResult.newState;
         }
 
         on eRaftResponse do (payload: tRaftResponse) {

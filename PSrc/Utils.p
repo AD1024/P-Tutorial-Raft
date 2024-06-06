@@ -16,6 +16,14 @@ fun lastLogIndex(log: seq[tServerLog]): int {
     return sizeof(log) - 1;
 }
 
+fun getLogTerm(log: seq[tServerLog], index: int): int {
+    if (index < 0 || index >= sizeof(log)) {
+        return 0;
+    } else {
+        return log[index].term;
+    }
+}
+
 fun lastLogTerm(log: seq[tServerLog]): int {
     if (sizeof(log) == 0) {
         return 0;
@@ -24,16 +32,16 @@ fun lastLogTerm(log: seq[tServerLog]): int {
     }
 }
 
-fun fillMap(m: map[Server, int], servers: set[Server], value: int): map[Server, int] {
-    var server: Server;
+fun fillMap(m: map[machine, int], servers: set[machine], value: int): map[machine, int] {
+    var server: machine;
     foreach(server in servers) {
         m[server] = value;
     }
     return m;
 }
 
-fun broadcastRequest(self: Server, peers: set[Server], e: event, payload: any) {
-    var peer: Server;
+fun broadcastRequest(self: Server, peers: set[machine], e: event, payload: any) {
+    var peer: machine;
     foreach(peer in peers) {
         if (peer != self) {
             send peer, e, payload;

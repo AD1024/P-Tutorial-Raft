@@ -2,7 +2,7 @@ module LeaderElections = {LeaderElectionThreeServers, LeaderElectionFiveServers}
 module LogConsistency = {TestLogMatching};
 
 
-test threeServers [main=LeaderElectionThreeServers]:
+test threeServersFail [main=LeaderElectionThreeServersFail]:
   assert SafetyOneLeader, LivenessLeaderExists in
   (union Server, Timer, LeaderElections);
 

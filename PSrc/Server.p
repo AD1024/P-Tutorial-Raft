@@ -79,7 +79,9 @@ machine Server {
 
     state Follower {
         entry {
-            restartTimer(electionTimer, 150 + choose(150));
+            restartTimer(electionTimer, 100 + choose(50));
+            leader = null as Server;
+            votedFor = null as Server;
         }
 
         on eReset do {
@@ -103,7 +105,7 @@ machine Server {
                 currentTerm = payload.term;
             }
             handleAppendEntries(payload);
-            startTimer(electionTimer, 150 + choose(150));
+            restartTimer(electionTimer, 100 + choose(50));
         }
 
         on eTimerTimeout goto Candidate;
@@ -133,7 +135,7 @@ machine Server {
                                         lastLogIndex=lastLogIndex(logs),
                                         lastLogTerm=lastLogTerm(logs)));
             }
-            startTimer(electionTimer, 150 + choose(150));
+            startTimer(electionTimer, 100 + choose(50));
         }
 
         on eAppendEntries do (payload: tAppendEntries) {
@@ -195,7 +197,7 @@ machine Server {
             leader = this;
             nextIndex = fillMap(nextIndex, peers, lastLogIndex(logs) + 1);
             matchIndex = fillMap(matchIndex, peers, 0);
-            restartTimer(electionTimer, 50);
+            restartTimer(electionTimer, 20);
             announce eBecomeLeader, (term=currentTerm-1, leader=this);
             broadcastAppendEntries();
         }
@@ -400,6 +402,7 @@ machine Server {
                 }
             }
         }
+        restartTimer(electionTimer, 20);
     }
 
     fun leaderCommits() {

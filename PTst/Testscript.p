@@ -10,11 +10,11 @@ module ServingTests = { OneClientOneServerReliable,
 
 test threeServersFail [main=LeaderElectionThreeServersFail]:
   assert SafetyOneLeader, LivenessLeaderExists in
-  (union Server, Timer, LeaderElections);
+  (union Server, Timer, LeaderElections, ServerWrapper);
 
 test fiveServers [main=LeaderElectionFiveServers]:
   assert SafetyOneLeader, LivenessLeaderExists in
-  (union Server, Timer, LeaderElections);
+  (union Server, Timer, LeaderElections, ServerWrapper);
 
 test oneClientOneServerReliable [main=OneClientOneServerReliable]:
   assert SafetyOneLeader, LivenessLeaderExists, LivenessProgress, SafetySynchronization in

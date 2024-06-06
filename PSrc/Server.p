@@ -2,7 +2,7 @@ type ServerId = int;
 type tRaftResponse = (client: Client, transId: int, result: any);
 event eRaftResponse: tRaftResponse;
 
-event eServerInit: (myId: ServerId, cluster: set[machine]);
+event eServerInit: (myId: ServerId, cluster: set[Server], centralSwitch: ServerInterface);
 
 type tRequestVote = (term: int, candidate: Server, lastLogIndex: int, lastLogTerm: int);
 event eRequestVote: tRequestVote;
@@ -16,6 +16,9 @@ event eAppendEntries: tAppendEntries;
 type tAppendEntriesReply = (sender: Server, term: int, success: bool, matchedIndex: int);
 event eInjectError;
 event eAppendEntriesReply: tAppendEntriesReply;
+
+type tPacket = (target: machine, e: event, p: any);
+event eForwardPls: tPacket;
 
 event eReset;
 
@@ -32,14 +35,15 @@ machine Server {
     var serverId: ServerId;
     var crashRate: int;
     var kvStore: KVStore;
-    var leader: machine;
+    var leader: Server;
     var clusterSize: int;
-    var peers: set[machine];
+    var peers: set[Server];
+    var switch: ServerInterface;
     // var executionResults: map[Client, map[int, Result]];
 
     // Leader state (volatile)
-    var nextIndex: map[machine, int];
-    var matchIndex: map[machine, int];
+    var nextIndex: map[Server, int];
+    var matchIndex: map[Server, int];
 
     // Leader state (persistent)
     var currentTerm: int;
@@ -58,11 +62,12 @@ machine Server {
 
     start state Init {
         entry {}
-        on eServerInit do (setup: (myId: ServerId, cluster: set[machine])) {
+        on eServerInit do (setup: (myId: ServerId, cluster: set[Server], centralSwitch: ServerInterface)) {
             kvStore = newStore();
             serverId = setup.myId;
             clusterSize = sizeof(setup.cluster);
             peers = setup.cluster;
+            switch = setup.centralSwitch;
             nextIndex = default(map[Server, int]);
             matchIndex = default(map[Server, int]);
             votesReceived = default(set[Server]);
@@ -103,7 +108,8 @@ machine Server {
 
         on eClientRequest do (payload: tClientRequest) {
             if (leader != null) {
-                send leader, eClientRequest, payload;
+                // send leader, eClientRequest, payload;
+                send switch, eForwardPls, (target=leader, e=eClientRequest, p=payload);
             } else {
                 clientRequestQueue += (sizeof(clientRequestQueue), payload);
             }
@@ -118,7 +124,7 @@ machine Server {
             handleAppendEntries(payload);
             if (leader == null) {
                 while (sizeof(clientRequestQueue) > 0) {
-                    send this, eClientRequest, clientRequestQueue[0];
+                    send switch, eForwardPls, (target=leader, e=eClientRequest, p=clientRequestQueue[0]);
                     clientRequestQueue -= (0);
                 }
             }
@@ -200,7 +206,8 @@ machine Server {
                 handleRequestVote(payload);
                 goto Follower;
             } else {
-                send payload.candidate, eRequestVoteReply, (sender=this, term=currentTerm, voteGranted=false);
+                // send payload.candidate, eRequestVoteReply, (sender=this, term=currentTerm, voteGranted=false);
+                send switch, eForwardPls, (target=payload.candidate, e=eRequestVoteReply, p=(sender=this, term=currentTerm, voteGranted=false));
             }
         }
 
@@ -227,7 +234,8 @@ machine Server {
             // restartTimer(heartbeatTimer);
             announce eBecomeLeader, (term=currentTerm, leader=this);
             while (sizeof(clientRequestQueue) > 0) {
-                send this, eClientRequest, clientRequestQueue[0];
+                // send this, eClientRequest, clientRequestQueue[0];
+                send switch, eForwardPls, (target=this, e=eClientRequest, p=clientRequestQueue[0]);
                 clientRequestQueue -= (0);
             }
             broadcastAppendEntries();
@@ -241,7 +249,10 @@ machine Server {
             if (currentTerm < payload.term) {
                 becomeFollower(payload.term);
             } else {
-                send payload.candidate, eRequestVoteReply, (sender=this, term=currentTerm, voteGranted=false);
+                // send payload.candidate, eRequestVoteReply, (sender=this, term=currentTerm, voteGranted=false);
+                send switch, eForwardPls, (target=payload.candidate,
+                            e=eRequestVoteReply,
+                            p=(sender=this, term=currentTerm, voteGranted=false));
             }
         }
 
@@ -255,7 +266,9 @@ machine Server {
                 handleAppendEntries(payload);
                 becomeFollower(payload.term);
             } else if (payload.term < currentTerm) {
-                send payload.leader, eRequestVoteReply, (sender=this, term=currentTerm, voteGranted=false);
+                // send payload.leader, eRequestVoteReply, (sender=this, term=currentTerm, voteGranted=false);
+                // send payload.leader, eAppendEntriesReply, (sender=this, term=currentTerm, success=false, matchedIndex=-1);
+                send switch, eForwardPls, (target=payload.leader, e=eAppendEntriesReply, p=(sender=this, term=currentTerm, success=false, matchedIndex=-1));
                 leaderCommits();
             }
         }
@@ -281,12 +294,14 @@ machine Server {
 
         on eClientRequest do (payload: tClientRequest) {
             var newEntry: tServerLog;
-            var target: machine;
+            var target: Server;
             var entries: seq[tServerLog];
             var i: int;
             // print format("Received client request {0}", payload);
             if (payload.cmd.op == GET) {
                 print format("Server processed (by {0}) request {1}", this, payload);
+                // For simplicity, we assume reliable delivery to the client
+                // Network failures are easy to handle in this case, though
                 send payload.client, eRaftResponse, (client=payload.client,
                                                      transId=payload.transId,
                                                      result=execute(kvStore, payload.cmd).result);
@@ -305,12 +320,18 @@ machine Server {
                             entries += (i, logs[i]);
                             i = i + 1;
                         }
-                        send target, eAppendEntries, (term=currentTerm,
+                        // send target, eAppendEntries, (term=currentTerm,
+                        //                             leader=this,
+                        //                             prevLogIndex=nextIndex[target] - 1,
+                        //                             prevLogTerm=getLogTerm(logs, nextIndex[target] - 1),
+                        //                             entries=entries,
+                        //                             leaderCommit=commitIndex);
+                        send switch, eForwardPls, (target=target, e=eAppendEntries, p=(term=currentTerm,
                                                     leader=this,
                                                     prevLogIndex=nextIndex[target] - 1,
                                                     prevLogTerm=getLogTerm(logs, nextIndex[target] - 1),
                                                     entries=entries,
-                                                    leaderCommit=commitIndex);
+                                                    leaderCommit=commitIndex));
                     }
                 }
             }
@@ -340,14 +361,17 @@ machine Server {
     fun handleRequestVote(reply: tRequestVote) {
         leader = null as Server;
         if (reply.term < currentTerm) {
-            send reply.candidate, eRequestVoteReply, (sender=this, term=currentTerm, voteGranted=false);
+            // send reply.candidate, eRequestVoteReply, (sender=this, term=currentTerm, voteGranted=false);
+            send switch, eForwardPls, (target=reply.candidate, e=eRequestVoteReply, p=(sender=this, term=currentTerm, voteGranted=false));
         } else {
             if ((votedFor == null as Server || votedFor == reply.candidate)
                     && logUpToDateCheck(reply.lastLogIndex, reply.lastLogTerm)) {
                 votedFor = reply.candidate;
-                send reply.candidate, eRequestVoteReply, (sender=this, term=currentTerm, voteGranted=true);
+                // send reply.candidate, eRequestVoteReply, (sender=this, term=currentTerm, voteGranted=true);
+                send switch, eForwardPls, (target=reply.candidate, e=eRequestVoteReply, p=(sender=this, term=currentTerm, voteGranted=true));
             } else {
-                send reply.candidate, eRequestVoteReply, (sender=this, term=currentTerm, voteGranted=false);
+                // send reply.candidate, eRequestVoteReply, (sender=this, term=currentTerm, voteGranted=false);
+                send switch, eForwardPls, (target=reply.candidate, e=eRequestVoteReply, p=(sender=this, term=currentTerm, voteGranted=false));
             }
         }
     }
@@ -360,12 +384,14 @@ machine Server {
         var i: int;
         var j: int;
         if (resp.term < currentTerm) {
-            send resp.leader, eAppendEntriesReply, (sender=this, term=currentTerm,
-                                                    success=false, matchedIndex=-1);
+            // send resp.leader, eAppendEntriesReply, (sender=this, term=currentTerm,
+            //                                         success=false, matchedIndex=-1);
+            send switch, eForwardPls, (target=resp.leader, e=eAppendEntriesReply, p=(sender=this, term=currentTerm, success=false, matchedIndex=-1));
         } else if (sizeof(logs) <= resp.prevLogIndex) {
             // If the log is very outdated
             leader = resp.leader;
-            send resp.leader, eAppendEntriesReply, (sender=this, term=currentTerm, success=false, matchedIndex=sizeof(logs));
+            // send resp.leader, eAppendEntriesReply, (sender=this, term=currentTerm, success=false, matchedIndex=sizeof(logs));
+            send switch, eForwardPls, (target=resp.leader, e=eAppendEntriesReply, p=(sender=this, term=currentTerm, success=false, matchedIndex=sizeof(logs)));
         } else if (resp.prevLogIndex >= 0 && logs[resp.prevLogIndex].term != resp.prevLogTerm) {
             // Log consistency check failed here;
             // search for the first occurence of the mismatched
@@ -376,8 +402,9 @@ machine Server {
             while (ptr > 0 && logs[ptr].term == mismatchedTerm) {
                 ptr = ptr - 1;
             }
-            send resp.leader, eAppendEntriesReply, (sender=this, term=currentTerm,
-                                                    success=false, matchedIndex=ptr);
+            // send resp.leader, eAppendEntriesReply, (sender=this, term=currentTerm,
+            //                                         success=false, matchedIndex=ptr);
+            send switch, eForwardPls, (target=resp.leader, e=eAppendEntriesReply, p=(sender=this, term=currentTerm, success=false, matchedIndex=ptr));
         } else {
             // Check if any entries disagree; delete all entries after it.
             leader = resp.leader;
@@ -407,12 +434,13 @@ machine Server {
                 }
             }
             executeCommands();
-            send resp.leader, eAppendEntriesReply, (sender=this, term=currentTerm, success=true, matchedIndex=lastLogIndex(logs));
+            // send resp.leader, eAppendEntriesReply, (sender=this, term=currentTerm, success=true, matchedIndex=lastLogIndex(logs));
+            send switch, eForwardPls, (target=resp.leader, e=eAppendEntriesReply, p=(sender=this, term=currentTerm, success=true, matchedIndex=lastLogIndex(logs)));
         }
     }
     
     fun broadcastAppendEntries() {
-        var target: machine;
+        var target: Server;
         var i: int;
         var j: int;
         var prevIndex: int;
@@ -437,20 +465,32 @@ machine Server {
                         i = i + 1;
                         j = j + 1;
                     }
-                    send target, eAppendEntries, (term=currentTerm,
+                    // send target, eAppendEntries, (term=currentTerm,
+                    //                                 leader=this,
+                    //                                 prevLogIndex=prevIndex,
+                    //                                 prevLogTerm=prevTerm,
+                    //                                 entries=entries,
+                    //                                 leaderCommit=commitIndex);
+                    send switch, eForwardPls, (target=target, e=eAppendEntries, p=(term=currentTerm,
                                                     leader=this,
                                                     prevLogIndex=prevIndex,
                                                     prevLogTerm=prevTerm,
                                                     entries=entries,
-                                                    leaderCommit=commitIndex);
+                                                    leaderCommit=commitIndex));
                 } else {
                     // send empty heartbeat
-                    send target, eAppendEntries, (term=currentTerm,
+                    // send target, eAppendEntries, (term=currentTerm,
+                    //                                 leader=this,
+                    //                                 prevLogIndex=prevIndex,
+                    //                                 prevLogTerm=prevTerm,
+                    //                                 entries=entries,
+                    //                                 leaderCommit=commitIndex);
+                    send switch, eForwardPls, (target=target, e=eAppendEntries, p=(term=currentTerm,
                                                     leader=this,
                                                     prevLogIndex=prevIndex,
                                                     prevLogTerm=prevTerm,
                                                     entries=entries,
-                                                    leaderCommit=commitIndex);
+                                                    leaderCommit=commitIndex));
                 }
             }
         }
@@ -462,7 +502,7 @@ machine Server {
         var nextCommit: int; // the next commit index
         var validMatchIndices: int; // the number of match indices that are greater than or equal to nextCommit
         var i: int;
-        var target: machine;
+        var target: Server;
         assert this == leader, "Only leader can execute the log on its own";
         // iteratively search for that index
         nextCommit = lastLogIndex(logs);

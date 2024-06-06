@@ -12,51 +12,33 @@ machine ServerInterface {
     var reorderRate: int;
     var duplicateRate: int;
 
-    var server: Server;
     var timer: Timer;
-    var pendingQueue: seq[(e: event, p: any)];
-    var delayMap: map[(e: event, p: any), int];
+    var pendingQueue: seq[tPacket];
+    var delayMap: map[tPacket, int];
 
     start state Init {
-        entry (setup: (server: Server, delayInterval: int, dropRate: int, reorderRate: int, duplicateRate: int)) {
-            server = setup.server;
+        entry (setup: (delayInterval: int, dropRate: int, reorderRate: int, duplicateRate: int)) {
             delayInterval = delayInterval;
             dropRate = dropRate;
             duplicateRate = duplicateRate;
-            pendingQueue = default(seq[(e: event, p: any)]);
-            delayMap = default(map[(e: event, p: any), int]);
+            pendingQueue = default(seq[tPacket]);
+            delayMap = default(map[tPacket, int]);
         }
 
-        on eRequestVote do (payload: tRequestVote) {
-            sendEvent(eRequestVote, payload);
-        }
-
-        on eRequestVoteReply do (payload: tRequestVoteReply) {
-            sendEvent(eRequestVoteReply, payload);
-        }
-
-        on eAppendEntries do (payload: tAppendEntries) {
-            sendEvent(eAppendEntries, payload);
-        }
-
-        on eAppendEntriesReply do (payload: tAppendEntriesReply) {
-            sendEvent(eAppendEntriesReply, payload);
-        }
-
-        on eClientRequest do (payload: tClientRequest) {
-            sendEvent(eClientRequest, payload);
+        on eForwardPls do (payload: tPacket) {
+            sendEvent(payload);
         }
     }
 
-    fun sendEvent(e: event, payload: any) {
-        var k: (e: event, p: any);
+    fun sendEvent(packet: tPacket) {
+        var k: tPacket;
         if (choose(100) < dropRate) {
             return;
         }
         if (delayInterval > 0) {
-            delayMap[(e=e, p=payload)] = choose(delayInterval);
+            delayMap[packet] = choose(delayInterval);
         } else {
-            pendingQueue += (sizeof(pendingQueue), (e=e, p=payload));
+            pendingQueue += (sizeof(pendingQueue), packet);
         }
         foreach (k in keys(delayMap)) {
             delayMap[k] = delayMap[k] - 1;
@@ -74,59 +56,52 @@ machine ServerInterface {
             if (choose(100) < reorderRate && sizeof(pendingQueue) > 1) {
                 i = choose(sizeof(pendingQueue) - 1) + 1;
                 // send server, pendingQueue[i].e, pendingQueue[i].p;
-                sendMsg(pendingQueue[i].e, pendingQueue[i].p);
+                sendMsg(pendingQueue[i]);
                 pendingQueue -= (i);
             }
-            sendMsg(pendingQueue[0].e, pendingQueue[0].p);
+            sendMsg(pendingQueue[0]);
             pendingQueue -= (0);
         }
     }
 
-    fun sendMsg(e: event, payload: any) {
+    fun sendMsg(packet: tPacket) {
         var numDups: int;
         numDups = 0;
         if (choose(100) < duplicateRate) {
             numDups = choose(3);
         }
-        print format("Sending {0} to {1} with payload {2}", e, server, payload);
-        send server, e, payload;
+        print format("Sending {0} to {1} with payload {2}", packet.e, packet.target, packet.p);
+        send packet.target, packet.e, packet.p;
         while (numDups > 0) {
-            send server, e, payload;
+            send packet.target, packet.e, packet.p;
             numDups = numDups - 1;
         }
     }
 }
 
-fun setUpCluster(numServers: int, networkCfg: NetworkConfig): seq[machine] {
-    var servers: seq[Server];
-    var interfaces: set[ServerInterface];
+fun newSwitch(): ServerInterface {
+    return new ServerInterface((delayInterval=0, dropRate=0, reorderRate=0, duplicateRate=0));
+}
+
+fun setUpCluster(numServers: int, networkCfg: NetworkConfig): set[Server] {
+    var servers: set[Server];
+    var interfaces: set[machine];
     var server: Server;
-    var serverInterface: ServerInterface;
+    var hub: ServerInterface;
     var i: int;
     var j: int;
-    servers = default(seq[Server]);
-    interfaces = default(set[ServerInterface]);
+    servers = default(set[Server]);
+    hub = new ServerInterface((delayInterval=networkCfg.delayInterval,
+        dropRate=networkCfg.dropRate, reorderRate=networkCfg.reorderRate,
+        duplicateRate=networkCfg.duplicateRate));
     i = 0;
     while (i < numServers) {
-        servers += (i, new Server());
+        servers += (new Server());
         i = i + 1;
     }
     i = 0;
-    j = 0;
-    while (i < numServers) {
-        interfaces = default(set[ServerInterface]);
-        j = 0;
-        while (j < numServers) {
-            if (i != j) {
-                serverInterface = new ServerInterface((server=servers[j],
-                    delayInterval=networkCfg.delayInterval,
-                    dropRate=networkCfg.dropRate, reorderRate=networkCfg.reorderRate,
-                    duplicateRate=networkCfg.duplicateRate));
-                interfaces += (serverInterface);
-            }
-            j = j + 1;
-        }
-        send servers[i], eServerInit, (myId=i, cluster=interfaces);
+    foreach (server in servers) {
+        send server, eServerInit, (myId=i, cluster=servers, centralSwitch=hub);
         i = i + 1;
     }
 
@@ -165,7 +140,7 @@ fun randomWorkload(numCmd: int): seq[Command] {
 
 machine OneClientOneServerReliable {
     var client: Client;
-    var servers: seq[machine];
+    var servers: set[machine];
     var viewService: View;
 
     start state Init {
@@ -174,7 +149,7 @@ machine OneClientOneServerReliable {
             viewService = new View((servers=servers, numClients=1, timeoutRate=0, crashRate=0));
             client = new Client((retry_time=30,
                 viewService=viewService,
-                server_list=servers,
+                servers=servers,
                 requests=randomWorkload(5)));
         }
     }
@@ -182,7 +157,7 @@ machine OneClientOneServerReliable {
 
 machine OneClientOneServerUnreliable {
     var client: Client;
-    var servers: seq[machine];
+    var servers: set[machine];
     var viewService: View;
 
     start state Init {
@@ -191,7 +166,7 @@ machine OneClientOneServerUnreliable {
             viewService = new View((servers=servers, numClients=1, timeoutRate=0, crashRate=0));
             client = new Client((retry_time=30,
                 viewService=viewService,
-                server_list=servers,
+                servers=servers,
                 requests=randomWorkload(5)));
         }
     }
@@ -199,7 +174,7 @@ machine OneClientOneServerUnreliable {
 
 machine OneClientFiveServersReliable {
     var client: Client;
-    var servers: seq[machine];
+    var servers: set[machine];
     var viewService: View;
 
     start state Init {
@@ -208,7 +183,7 @@ machine OneClientFiveServersReliable {
             viewService = new View((servers=servers, numClients=1, timeoutRate=0, crashRate=0));
             client = new Client((retry_time=30,
                         viewService=viewService,
-                        server_list=servers,
+                        servers=servers,
                         requests=randomWorkload(10)));
         }
     }
@@ -216,7 +191,7 @@ machine OneClientFiveServersReliable {
 
 machine OneClienFiveServersUnreliable {
     var client: Client;
-    var servers: seq[machine];
+    var servers: set[machine];
     var viewService: View;
 
     start state Init {
@@ -225,7 +200,7 @@ machine OneClienFiveServersUnreliable {
             viewService = new View((servers=servers, numClients=1, timeoutRate=0, crashRate=0));
             client = new Client((retry_time=30,
                         viewService=viewService, 
-                        server_list=servers,
+                        servers=servers,
                         requests=randomWorkload(10)));
         }
     }
@@ -235,7 +210,7 @@ machine ThreeClientsOneServerReliable {
     var client1: Client;
     var client2: Client;
     var client3: Client;
-    var servers: seq[machine];
+    var servers: set[machine];
     var viewService: View;
 
     start state Init {
@@ -244,15 +219,15 @@ machine ThreeClientsOneServerReliable {
             viewService = new View((servers=servers, numClients=3, timeoutRate=0, crashRate=0));
             client1 = new Client((retry_time=30,
                         viewService=viewService,
-                        server_list=servers,
+                        servers=servers,
                         requests=randomWorkload(5)));
             client2 = new Client((retry_time=30,
                         viewService=viewService,
-                        server_list=servers,
+                        servers=servers,
                         requests=randomWorkload(5)));
             client3 = new Client((retry_time=30,
                         viewService=viewService,
-                        server_list=servers,
+                        servers=servers,
                         requests=randomWorkload(5)));
         }
     }
@@ -262,7 +237,7 @@ machine ThreeClientsFiveServersReliable {
     var client1: Client;
     var client2: Client;
     var client3: Client;
-    var servers: seq[machine];
+    var servers: set[machine];
     var viewService: View;
 
     start state Init {
@@ -271,15 +246,15 @@ machine ThreeClientsFiveServersReliable {
             viewService = new View((servers=servers, numClients=3, timeoutRate=0, crashRate=0));
             client1 = new Client((retry_time=30,
                         viewService=viewService,
-                        server_list=servers,
+                        servers=servers,
                         requests=randomWorkload(5)));
             client2 = new Client((retry_time=30,
                         viewService=viewService,
-                        server_list=servers,
+                        servers=servers,
                         requests=randomWorkload(5)));
             client3 = new Client((retry_time=30,
                         viewService=viewService,
-                        server_list=servers,
+                        servers=servers,
                         requests=randomWorkload(5)));
         }
     }
@@ -289,7 +264,7 @@ machine ThreeClientsFiveServersUnreliable {
     var client1: Client;
     var client2: Client;
     var client3: Client;
-    var servers: seq[machine];
+    var servers: set[machine];
     var viewService: View;
 
     start state Init {
@@ -298,15 +273,15 @@ machine ThreeClientsFiveServersUnreliable {
             viewService = new View((servers=servers, numClients=3, timeoutRate=0, crashRate=0));
             client1 = new Client((retry_time=30,
                         viewService=viewService,
-                        server_list=servers,
+                        servers=servers,
                         requests=randomWorkload(5)));
             client2 = new Client((retry_time=30,
                         viewService=viewService,
-                        server_list=servers,
+                        servers=servers,
                         requests=randomWorkload(5)));
             client3 = new Client((retry_time=30,
                         viewService=viewService,
-                        server_list=servers,
+                        servers=servers,
                         requests=randomWorkload(5)));
         }
     }
@@ -314,7 +289,7 @@ machine ThreeClientsFiveServersUnreliable {
 
 machine OneClientOneServerRandomCrashReliable {
     var client: Client;
-    var servers: seq[machine];
+    var servers: set[machine];
     var viewService: View;
 
     start state Init {
@@ -323,7 +298,7 @@ machine OneClientOneServerRandomCrashReliable {
             viewService = new View((servers=servers, numClients=1, timeoutRate=0, crashRate=50));
             client = new Client((retry_time=30,
                 viewService=viewService,
-                server_list=servers,
+                servers=servers,
                 requests=randomWorkload(5)));
         }
     }

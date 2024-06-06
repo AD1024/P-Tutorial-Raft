@@ -1,14 +1,14 @@
 event eShutdown;
 
 machine View {
-    var servers: seq[machine];
+    var servers: set[machine];
     var timeoutRate: int;
     var crashRate: int;
     var triggerTimer: Timer;
     var clientsDone: set[machine];
 
     start state Init {
-        entry (setup: (servers: seq[machine], numClients: int, timeoutRate: int, crashRate: int)) {
+        entry (setup: (servers: set[machine], numClients: int, timeoutRate: int, crashRate: int)) {
             servers = setup.servers;
             timeoutRate = setup.timeoutRate;
             send choose(servers), eElectionTimeout;
@@ -24,16 +24,14 @@ machine View {
         }
 
         on eHeartbeatTimeout do {
-            var i: int;
-            i = 0;
-            while (i < sizeof(servers)) {
-                send servers[i], eHeartbeatTimeout;
+            var server: machine;
+            foreach (server in servers) {
+                send server, eHeartbeatTimeout;
                 if (choose(100) < crashRate) {
-                    send servers[i], eReset;
+                    send server, eReset;
                 } else if (choose(100) < timeoutRate) {
-                    send servers[i], eElectionTimeout;
+                    send server, eElectionTimeout;
                 }
-                i = i + 1;
             }
         }
 

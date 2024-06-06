@@ -21,7 +21,7 @@ fun setUpRaft(numberOfServers:int) : seq[Server] {
       }
       j = j + 1;
     }
-    send servers[i], eServerInit, (myId=i, cluster=peers);
+    send servers[i], eServerInit, (myId=i, cluster=peers, centralSwitch=newSwitch());
     i = i + 1;
   }
   return servers;

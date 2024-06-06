@@ -6,16 +6,16 @@ event eClientFinished: Client;
 
 machine Client {
     var worklist: seq[Command];
-    var servers: seq[machine];
+    var servers: set[machine];
     var ptr: int;
     var tId: int;
     var currentCmd: Command;
     var view: View;
 
     start state Init {
-        entry (config: (retry_time: int, viewService: View, server_list: seq[machine], requests: seq[Command])) {
+        entry (config: (retry_time: int, viewService: View, servers: set[machine], requests: seq[Command])) {
             worklist = config.requests;
-            servers = config.server_list;
+            servers = config.servers;
             view = config.viewService;
             ptr = 0;
             tId = 0;
@@ -57,8 +57,8 @@ machine Client {
     fun broadcastToCluster() {
         var s: machine;
         var i: int;
-        while (i < sizeof(servers)) {
-            send servers[i], eClientRequest, (transId=tId, client=this, cmd=currentCmd);
+        foreach (s in servers) {
+            send s, eClientRequest, (transId=tId, client=this, cmd=currentCmd);
             i = i + 1;
         }
     }

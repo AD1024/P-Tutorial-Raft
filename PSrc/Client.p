@@ -1,5 +1,7 @@
 type tClientRequest = (transId: int, client: Client, cmd: Command);
 event eClientRequest: tClientRequest;
+event eClientWaitingResponse: (client: Client, transId: int);
+event eClientGotResponse: (client: Client, transId: int);
 
 machine Client {
     var worklist: seq[Command];
@@ -39,10 +41,12 @@ machine Client {
     state WaitForResponse {
         entry {
             startTimer(retryTimer, retryInterval);
+            announce eClientWaitingResponse, (client=this, transId=tId);
         }
 
         on eRaftResponse do (resp: tRaftResponse) {
             if (resp.transId == tId) {
+                announce eClientGotResponse, (client=this, transId=tId);
                 tId = tId + 1;
                 goto SendOne;
             }
@@ -56,8 +60,9 @@ machine Client {
 
     fun broadcastToCluster() {
         var s: machine;
-        foreach (s in servers) {
-            send s, eClientRequest, (transId=tId, client=this, cmd=currentCmd);
+        var i: int;
+        while (i < sizeof(servers)) {
+            send servers[i], eClientRequest, (transId=tId, client=this, cmd=currentCmd);
         }
     }
 

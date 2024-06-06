@@ -1,23 +1,35 @@
-fun setUpRaft(numberOfServers:int) : set[Server] {
-  var servers: set[Server];
+fun setUpRaft(numberOfServers:int) : seq[Server] {
+  var servers: seq[Server];
+  var peers: set[Server];
   var serverCounter: int;
   var server: Server;
-  servers = default(set[Server]);
+  var i: int;
+  var j: int;
+  servers = default(seq[Server]);
   serverCounter = 0;
   while (serverCounter < numberOfServers) {
-    servers += (new Server());
+    servers += (sizeof(servers), new Server());
     serverCounter = serverCounter + 1;
   }
-  foreach(server in servers) {
-    send server, eServerInit, (myId=serverCounter, cluster=servers);
-    serverCounter = serverCounter - 1;
+  i = 0;
+  while (i < numberOfServers) {
+    peers = default(set[Server]);
+    j = 0;
+    while (j < numberOfServers) {
+      if (i != j) {
+        peers += (servers[j]);
+      }
+      j = j + 1;
+    }
+    send servers[i], eServerInit, (myId=i, cluster=peers);
+    i = i + 1;
   }
   return servers;
 }
 
 machine LeaderElectionThreeServersFail {
   var timer: Timer;
-  var servers: set[Server];
+  var servers: seq[Server];
   var fail: bool;
   start state Init {
     entry { 

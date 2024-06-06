@@ -53,15 +53,17 @@ machine ServerInterface {
         if (choose(100) < dropRate) {
             return;
         }
+        if (delayInterval > 0) {
+            delayMap[(e=e, p=payload)] = choose(delayInterval);
+        } else {
+            pendingQueue += (sizeof(pendingQueue), (e=e, p=payload));
+        }
         foreach (k in keys(delayMap)) {
             delayMap[k] = delayMap[k] - 1;
-            if (delayMap[k] == 0) {
+            if (delayMap[k] <= 0) {
                 pendingQueue += (sizeof(pendingQueue), k);
                 delayMap -= k;
             }
-        }
-        if (delayInterval > 0) {
-            delayMap[(e=e, p=payload)] = choose(delayInterval);
         }
         commitEvents();
     }
@@ -86,7 +88,6 @@ machine ServerInterface {
         if (choose(100) < duplicateRate) {
             numDups = choose(3);
         }
-        assert false;
         print format("Sending {0} to {1} with payload {2}", e, server, payload);
         send server, e, payload;
         while (numDups > 0) {
@@ -114,6 +115,7 @@ fun setUpCluster(numServers: int, networkCfg: NetworkConfig): seq[machine] {
     j = 0;
     while (i < numServers) {
         interfaces = default(set[ServerInterface]);
+        j = 0;
         while (j < numServers) {
             if (i != j) {
                 serverInterface = new ServerInterface((server=servers[j],
@@ -166,28 +168,39 @@ machine OneClientOneServerReliable {
 
     start state Init {
         entry {
-            servers = setUpCluster(1, (delayInterval=0, dropRate=0, reorderRate=0, duplicateRate=0));
-            client = new Client((retry_time=30, server_list=servers, requests=randomWorkload(5)));
+            client = new Client((retry_time=30, server_list=setUpCluster(1, (delayInterval=0, dropRate=0, reorderRate=0, duplicateRate=0)), requests=randomWorkload(5)));
         }
     }
 }
 
-machine OneClientOneServerUnreliableNetwork {
+machine OneClientOneServerUnreliable {
     var client: Client;
-    var servers: seq[machine];
 
     start state Init {
         entry {
-            servers = setUpCluster(1, (delayInterval=3, dropRate=10, reorderRate=10, duplicateRate=5));
-            client = new Client((retry_time=30, server_list=servers, requests=randomWorkload(5)));
+            client = new Client((retry_time=30,
+                server_list=setUpCluster(1, (delayInterval=3, dropRate=10, reorderRate=10, duplicateRate=5)),
+                requests=randomWorkload(5)));
         }
     }
 }
 
-// machine OneClientFiveServersReliable {
-//     start state Init {
-//         entry {
+machine OneClientFiveServersReliable {
+    start state Init {
+        entry {
+            var client: Client;
+            client = new Client((retry_time=30, server_list=setUpCluster(5, (delayInterval=0, dropRate=0, reorderRate=0, duplicateRate=0)),
+                        requests=randomWorkload(10)));
+        }
+    }
+}
 
-//         }
-//     }
-// }
+machine OneClienFiveServersUnreliable {
+    start state Init {
+        entry {
+            var client: Client;
+            client = new Client((retry_time=30, server_list=setUpCluster(5, (delayInterval=3, dropRate=10, reorderRate=10, duplicateRate=5)),
+                        requests=randomWorkload(10)));
+        }
+    }
+}

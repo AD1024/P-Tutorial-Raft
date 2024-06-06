@@ -348,7 +348,7 @@ machine Server {
             // Append entries
             j = 0;
             while (j < sizeof(resp.entries)) {
-                logs[resp.prevLogIndex + 1 + j] = resp.entries[j];
+                logs += (resp.prevLogIndex + 1 + j, resp.entries[j]);
                 j = j + 1;
             }
             if (resp.leaderCommit > commitIndex) {

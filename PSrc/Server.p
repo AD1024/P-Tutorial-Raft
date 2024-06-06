@@ -237,6 +237,8 @@ machine Server {
     }
 
     fun handleAppendEntries(resp: tAppendEntries) {
+
+
         var myLastIndex: int;
         var myLastTerm: int;
         var ptr: int;
@@ -290,11 +292,16 @@ machine Server {
                 }
             }
             executeCommands();
+
             send resp.leader, eAppendEntriesReply, (sender=this, term=currentTerm, success=true, firstIndexUnmatched=lastLogIndex(logs) + 1);
         }
+
+        announce eAppendEntriesRecv, (mylog=logs,);
+
     }
     
     fun broadcastAppendEntries() {
+
         var target: Server;
         var i: int;
         var j: int;
@@ -337,6 +344,8 @@ machine Server {
                 }
             }
         }
+        announce eAppendEntriesSent, (mylog=logs,);
+
     }
 
     fun executeCommands() {

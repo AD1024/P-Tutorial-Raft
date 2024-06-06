@@ -1,4 +1,4 @@
-module LeaderElections = {LeaderElectionThreeServers, LeaderElectionFiveServers};
+module LeaderElections = {LeaderElectionThreeServersFail, LeaderElectionFiveServers};
 module LogConsistency = {TestLogMatching};
 
 

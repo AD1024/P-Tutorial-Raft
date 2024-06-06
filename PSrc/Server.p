@@ -360,7 +360,7 @@ machine Server {
             send resp.leader, eAppendEntriesReply, (sender=this, term=currentTerm, success=true, matchedIndex=lastLogIndex(logs));
         }
 
-        announce eAppendEntriesRecv, (mylog=logs,);
+        announce eAppendEntriesRecv, (node=this, totalNodes=clusterSize, log=logs);
 
     }
     
@@ -372,6 +372,8 @@ machine Server {
         var prevTerm: int;
         var entries: seq[tServerLog];
         assert this == leader, "Only leader can broadcast AppendEntries";
+        announce eAppendEntriesSent, (node=this, totalNodes=clusterSize, log=logs);
+
         foreach (target in peers) {
             if (this != target) {
                 entries = default(seq[tServerLog]);

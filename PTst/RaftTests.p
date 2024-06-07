@@ -28,6 +28,14 @@ machine ServerInterface {
         on eForwardPls do (payload: tPacket) {
             sendEvent(payload);
         }
+
+        on eShutdown do {
+            goto StopForwarding;
+        }
+    }
+
+    state StopForwarding {
+        ignore eForwardPls, eShutdown;
     }
 
     fun sendEvent(packet: tPacket) {

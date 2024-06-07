@@ -352,6 +352,7 @@ machine Server {
     state FinishedServing {
         entry {
             print format("{0} is shutting down", this);
+            send switch, eShutdown;
             // send electionTimer, eShutdown;
             // send heartbeatTimer, eShutdown;
         }

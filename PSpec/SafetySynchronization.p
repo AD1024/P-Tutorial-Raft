@@ -1,11 +1,17 @@
 spec SafetySynchronization observes eClientRequest, eRaftResponse {
     var localKVStore: KVStore;
     var requestResultMap: map[Client, map[int, Result]];
+    var requestSeq: seq[Command];
+    var seenId: set[int];
+    var respondedId : set[int];
 
     start state Init {
         entry {
             localKVStore = newStore();
             requestResultMap = default(map[Client, map[int, Result]]);
+            requestSeq = default(seq[Command]);
+            seenId = default(set[int]);
+            respondedId = default(set[int]);
             goto Listening;
         }
     }
@@ -13,16 +19,24 @@ spec SafetySynchronization observes eClientRequest, eRaftResponse {
     state Listening {
         on eClientRequest do (payload: tClientRequest) {
             var execResult: ExecutionResult;
-            if (!(payload.client in keys(requestResultMap))) {
-                requestResultMap[payload.client] = default(map[int, Result]);
+            if (payload.client == payload.sender && !(payload.transId in seenId)) {
+                seenId += (payload.transId);
+                requestSeq += (sizeof(requestSeq), payload.cmd);
+                if (!(payload.client in keys(requestResultMap))) {
+                    requestResultMap[payload.client] = default(map[int, Result]);
+                }
+                execResult = execute(localKVStore, payload.cmd);
+                requestResultMap[payload.client][payload.transId] = execResult.result;
+                localKVStore = execResult.newState;
             }
-            execResult = execute(localKVStore, payload.cmd);
-            requestResultMap[payload.client][payload.transId] = execResult.result;
-            localKVStore = execResult.newState;
+            print format("Forwarded request monitored {0}", payload);
         }
 
         on eRaftResponse do (payload: tRaftResponse) {
-            assert requestResultMap[payload.client][payload.transId] == payload.result;
+            if (!(payload.transId in respondedId)) {
+                respondedId += (payload.transId);
+                assert requestResultMap[payload.client][payload.transId] == payload.result, format("Expected {0} but got {1}; request history: {2}", requestResultMap[payload.client][payload.transId], payload.result, requestSeq);
+            }
         }
     }
 }

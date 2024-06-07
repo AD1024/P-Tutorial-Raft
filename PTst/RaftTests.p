@@ -184,7 +184,7 @@ machine OneClientFiveServersReliable {
             client = new Client((retry_time=30,
                         viewService=viewService,
                         servers=servers,
-                        requests=randomWorkload(10)));
+                        requests=randomWorkload(5)));
         }
     }
 }

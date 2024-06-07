@@ -6,11 +6,14 @@ machine View {
     var crashRate: int;
     var triggerTimer: Timer;
     var clientsDone: set[machine];
+    var numClients: int;
 
     start state Init {
         entry (setup: (servers: set[machine], numClients: int, timeoutRate: int, crashRate: int)) {
             servers = setup.servers;
             timeoutRate = setup.timeoutRate;
+            numClients = setup.numClients;
+            crashRate = setup.crashRate;
             send choose(servers), eElectionTimeout;
             triggerTimer = new Timer((user=this, timeoutEvent=eHeartbeatTimeout));
             clientsDone = default(set[machine]);
@@ -33,12 +36,13 @@ machine View {
                     send server, eElectionTimeout;
                 }
             }
+            startTimer(triggerTimer);
         }
 
         on eClientFinished do (client: machine) {
             var i: int;
             clientsDone += (client);
-            if (sizeof(clientsDone) == sizeof(servers)) {
+            if (sizeof(clientsDone) == numClients) {
                 i = 0;
                 while (i < sizeof(servers)) {
                     send servers[i], eShutdown;

@@ -109,7 +109,7 @@ machine Server {
         on eClientRequest do (payload: tClientRequest) {
             if (leader != null) {
                 // send leader, eClientRequest, payload;
-                send switch, eForwardPls, (target=leader, e=eClientRequest, p=payload);
+                send switch, eForwardPls, (target=leader, e=eClientRequest, p=forwardedRequest(payload));
             } else {
                 clientRequestQueue += (sizeof(clientRequestQueue), payload);
             }
@@ -124,7 +124,7 @@ machine Server {
             handleAppendEntries(payload);
             if (leader == null) {
                 while (sizeof(clientRequestQueue) > 0) {
-                    send switch, eForwardPls, (target=leader, e=eClientRequest, p=clientRequestQueue[0]);
+                    send switch, eForwardPls, (target=leader, e=eClientRequest, p=forwardedRequest(clientRequestQueue[0]));
                     clientRequestQueue -= (0);
                 }
             }
@@ -229,13 +229,13 @@ machine Server {
     state Leader {
         entry {
             leader = this;
-            nextIndex = fillMap(nextIndex, peers, lastLogIndex(logs) + 1);
-            matchIndex = fillMap(matchIndex, peers, 0);
+            nextIndex = fillMap(nextIndex, peers, sizeof(logs));
+            matchIndex = fillMap(matchIndex, peers, -1);
             // restartTimer(heartbeatTimer);
             announce eBecomeLeader, (term=currentTerm, leader=this);
             while (sizeof(clientRequestQueue) > 0) {
-                // send this, eClientRequest, clientRequestQueue[0];
-                send switch, eForwardPls, (target=this, e=eClientRequest, p=clientRequestQueue[0]);
+                send this, eClientRequest, forwardedRequest(clientRequestQueue[0]);
+                // send switch, eForwardPls, (target=this, e=eClientRequest, p=clientRequestQueue[0]);
                 clientRequestQueue -= (0);
             }
             broadcastAppendEntries();
@@ -308,16 +308,16 @@ machine Server {
             } else {
                 newEntry = (term=currentTerm, command=payload.cmd, client=payload.client, transId=payload.transId);
                 if (!(newEntry in logs)) {
-                    logs += (lastLogIndex(logs) + 1, newEntry);
+                    logs += (sizeof(logs), newEntry);
                 }
-                // print format("Current logs: {0}", logs);
+                print format("Current logs: {0}", logs);
                 // use info of nextIndex and matchIndex to broadcast to peers
                 foreach (target in peers) {
-                    if (target != this && nextIndex[target] <= lastLogIndex(logs)) {
+                    if (target != this && nextIndex[target] < sizeof(logs)) {
                         entries = default(seq[tServerLog]);
                         i = nextIndex[target];
                         while (i < sizeof(logs)) {
-                            entries += (i, logs[i]);
+                            entries += (i - nextIndex[target], logs[i]);
                             i = i + 1;
                         }
                         // send target, eAppendEntries, (term=currentTerm,
@@ -358,12 +358,17 @@ machine Server {
         ignore eShutdown, eRequestVote, eRequestVoteReply, eAppendEntries, eAppendEntriesReply, eClientRequest, eHeartbeatTimeout, eElectionTimeout;
     }
 
+    fun forwardedRequest(req: tClientRequest): tClientRequest {
+        return (transId=req.transId, client=req.client, cmd=req.cmd, sender=this);
+    }
+
     fun handleRequestVote(reply: tRequestVote) {
         leader = null as Server;
         if (reply.term < currentTerm) {
             // send reply.candidate, eRequestVoteReply, (sender=this, term=currentTerm, voteGranted=false);
             send switch, eForwardPls, (target=reply.candidate, e=eRequestVoteReply, p=(sender=this, term=currentTerm, voteGranted=false));
         } else {
+            currentTerm = reply.term;
             if ((votedFor == null as Server || votedFor == reply.candidate)
                     && logUpToDateCheck(reply.lastLogIndex, reply.lastLogTerm)) {
                 votedFor = reply.candidate;
@@ -447,11 +452,12 @@ machine Server {
         var prevTerm: int;
         var entries: seq[tServerLog];
         assert this == leader, "Only leader can broadcast AppendEntries";
+        print format("Broadcasting AppendEntries with log {0}", logs);
         foreach (target in peers) {
             if (this != target) {
                 entries = default(seq[tServerLog]);
                 prevIndex = nextIndex[target] - 1;
-                if (prevIndex >= 0) {
+                if (prevIndex >= 0 && prevIndex < sizeof(logs)) {
                     prevTerm = logs[prevIndex].term;
                 } else {
                     prevTerm = 0;
@@ -465,6 +471,7 @@ machine Server {
                         i = i + 1;
                         j = j + 1;
                     }
+                    print format("Entries for {0} is {1}", target, entries);
                     // send target, eAppendEntries, (term=currentTerm,
                     //                                 leader=this,
                     //                                 prevLogIndex=prevIndex,
@@ -506,6 +513,7 @@ machine Server {
         assert this == leader, "Only leader can execute the log on its own";
         // iteratively search for that index
         nextCommit = lastLogIndex(logs);
+        print format("{0} state; nextCommit={1} commitIndex={2} matchIndex={3}", this, nextCommit, commitIndex, matchIndex);
         while (nextCommit > commitIndex) {
             // counting itself first
             validMatchIndices = 1;
@@ -556,7 +564,7 @@ machine Server {
         commitIndex = 0;
         lastApplied = -1;
         nextIndex = fillMap(nextIndex, peers, 0);
-        matchIndex = fillMap(matchIndex, peers, 0);
+        matchIndex = fillMap(matchIndex, peers, -1);
         goto Follower;
     }
 }

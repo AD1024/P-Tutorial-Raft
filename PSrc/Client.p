@@ -1,7 +1,8 @@
-type tClientRequest = (transId: int, client: Client, cmd: Command);
+type tClientRequest = (transId: int, client: Client, cmd: Command, sender: machine);
 event eClientRequest: tClientRequest;
 event eClientWaitingResponse: (client: Client, transId: int);
 event eClientGotResponse: (client: Client, transId: int);
+event eClientFinishedMonitor: Client;
 event eClientFinished: Client;
 
 machine Client {
@@ -58,14 +59,14 @@ machine Client {
         var s: machine;
         var i: int;
         foreach (s in servers) {
-            send s, eClientRequest, (transId=tId, client=this, cmd=currentCmd);
+            send s, eClientRequest, (transId=tId, client=this, cmd=currentCmd, sender=this);
             i = i + 1;
         }
     }
 
     state Done {
         entry {
-            announce eClientFinished, this;
+            announce eClientFinishedMonitor, this;
             send view, eClientFinished, this;
         }
         ignore eRaftResponse, eHeartbeatTimeout;

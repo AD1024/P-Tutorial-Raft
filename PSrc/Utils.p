@@ -32,10 +32,12 @@ fun lastLogTerm(log: seq[tServerLog]): int {
     }
 }
 
-fun fillMap(m: map[Server, int], servers: set[Server], value: int): map[Server, int] {
+fun fillMap(self: machine, m: map[Server, int], servers: set[Server], value: int): map[Server, int] {
     var server: Server;
     foreach(server in servers) {
-        m[server] = value;
+        if (server != self) {
+            m[server] = value;
+        }
     }
     return m;
 }

@@ -14,7 +14,7 @@ machine Client {
     var view: View;
 
     start state Init {
-        entry (config: (retry_time: int, viewService: View, servers: set[machine], requests: seq[Command])) {
+        entry (config: (viewService: View, servers: set[machine], requests: seq[Command])) {
             worklist = config.requests;
             servers = config.servers;
             view = config.viewService;

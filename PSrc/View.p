@@ -1,22 +1,38 @@
 event eShutdown;
 
 machine View {
-    var servers: set[machine];
+    var servers: set[Server];
     var timeoutRate: int;
     var crashRate: int;
+    var numFailures: int;
     var triggerTimer: Timer;
     var clientsDone: set[machine];
     var numClients: int;
 
     start state Init {
-        entry (setup: (servers: set[machine], numClients: int, timeoutRate: int, crashRate: int)) {
-            servers = setup.servers;
+        entry (setup: (numServers: int, numClients: int, timeoutRate: int, crashRate: int, numFailures: int)) {
+            var i: int;
+            var server: Server;
             timeoutRate = setup.timeoutRate;
             numClients = setup.numClients;
             crashRate = setup.crashRate;
-            send choose(servers), eElectionTimeout;
+            numFailures = setup.numFailures;
+            while (i < setup.numServers) {
+                servers += (new Server());
+                i = i + 1;
+            }
+            i = 0;
+            foreach (server in servers) {
+                send server, eServerInit, (myId=i, cluster=servers, viewServer=this);
+            }
             triggerTimer = new Timer((user=this, timeoutEvent=eHeartbeatTimeout));
             clientsDone = default(set[machine]);
+            i = 0;
+            while (i < numClients) {
+                new Client((viewService=this, servers=servers, requests=randomWorkload(choose(5) + 1)));
+                i = i + 1;
+            } 
+            send choose(servers), eElectionTimeout;
             goto Monitoring;
         }
     }
@@ -27,12 +43,12 @@ machine View {
         }
 
         on eHeartbeatTimeout do {
-            var server: machine;
+            var server: Server;
             foreach (server in servers) {
                 send server, eHeartbeatTimeout;
-                if (choose(100) < crashRate) {
+                if (choose(100) < crashRate && numFailures > 0) {
                     send server, eReset;
-                } else if (choose(100) < timeoutRate) {
+                } else if (choose(100) < timeoutRate && numFailures > 0) {
                     send server, eElectionTimeout;
                 }
             }

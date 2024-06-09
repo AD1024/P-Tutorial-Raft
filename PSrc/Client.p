@@ -12,6 +12,7 @@ machine Client {
     var tId: int;
     var currentCmd: Command;
     var view: View;
+    var timer: Timer;
 
     start state Init {
         entry (config: (viewService: View, servers: set[machine], requests: seq[Command])) {
@@ -20,6 +21,7 @@ machine Client {
             view = config.viewService;
             ptr = 0;
             tId = 0;
+            timer = new Timer((user=this, timeoutEvent=eHeartbeatTimeout));
             goto SendOne;
         }
     }
@@ -44,6 +46,13 @@ machine Client {
     state WaitForResponse {
         entry {
             announce eClientWaitingResponse, (client=this, transId=tId);
+            startTimer(timer);
+        }
+
+        on eHeartbeatTimeout do {
+            print format("Client {0} timed out waiting for response {1}", this, tId);
+            broadcastToCluster();
+            startTimer(timer);
         }
 
         on eRaftResponse do (resp: tRaftResponse) {

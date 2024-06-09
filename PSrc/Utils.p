@@ -32,6 +32,22 @@ fun lastLogTerm(log: seq[tServerLog]): int {
     }
 }
 
+fun Max(a: int, b: int): int {
+    if (a > b) {
+        return a;
+    } else {
+        return b;
+    }
+}
+
+fun Min(a: int, b: int): int {
+    if (a < b) {
+        return a;
+    } else {
+        return b;
+    }
+}
+
 fun fillMap(self: machine, m: map[Server, int], servers: set[Server], value: int): map[Server, int] {
     var server: Server;
     foreach(server in servers) {

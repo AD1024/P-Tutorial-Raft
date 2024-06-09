@@ -35,7 +35,7 @@ spec SafetySynchronization observes eClientRequest, eRaftResponse {
                 requestResultMap[payload.client][payload.transId] = execResult.result;
                 localKVStore = execResult.newState;
             }
-            print format("Forwarded request monitored {0}", payload);
+            // print format("Forwarded request monitored {0}", payload);
         }
 
         on eRaftResponse do (payload: tRaftResponse) {

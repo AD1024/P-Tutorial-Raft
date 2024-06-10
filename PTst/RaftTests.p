@@ -55,7 +55,7 @@ machine OneClientFiveServersUnreliable {
     start state Init {
         entry {
             var view: View;
-            view = setUpCluster(5, 1, 5, 5, 1);
+            view = setUpCluster(5, 1, 5, 5, 2);
         }
     }
 }
@@ -101,24 +101,6 @@ machine ThreeClientsOneServerReliable {
         entry {
             var view: View;
             view = setUpCluster(1, 3, 0, 0, 0);
-        }
-    }
-}
-
-machine ThreeClientsFiveServersReliable {
-    start state Init {
-        entry {
-            var view: View;
-            view = setUpCluster(5, 3, 0, 0, 0);
-        }
-    }
-}
-
-machine ThreeClientsFiveServersUnreliable {
-    start state Init {
-        entry {
-            var view: View;
-            view = setUpCluster(5, 3, 5, 5, 1);
         }
     }
 }

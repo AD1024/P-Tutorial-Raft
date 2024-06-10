@@ -50,7 +50,7 @@ machine View {
             clientsDone = default(set[machine]);
             i = 0;
             while (i < numClients) {
-                new Client((viewService=this, servers=servers, requests=randomWorkload(3)));
+                new Client((viewService=this, servers=servers, requests=randomWorkload(10)));
                 i = i + 1;
             } 
             goto Monitoring;
@@ -115,7 +115,7 @@ machine View {
                 }
             }
             if (sizeof(leaders) == 0) {
-                if (noLeaderRounds == 5) {
+                if (noLeaderRounds == 25) {
                     server = mostUpToDateServer();
                     print format("NoLeader rounds exceeded, trigger election on {0}", server);
                     send server, eElectionTimeout;

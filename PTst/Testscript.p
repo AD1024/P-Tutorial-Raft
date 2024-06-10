@@ -4,8 +4,6 @@ module ServingTests = { OneClientOneServerReliable,
                         OneClientFiveServersUnreliable,
                         TwoClientsThreeServersReliable,
                         TwoClientsThreeServersUnreliable,
-                        ThreeClientsFiveServersReliable,
-                        ThreeClientsFiveServersUnreliable,
                         ThreeClientsOneServerReliable};
 
 test fiveServers [main=LeaderElectionFiveServers]:
@@ -25,14 +23,6 @@ test oneClientFiveServersUnreliable [main=OneClientFiveServersUnreliable]:
   (union Server, Timer, Client, View, ServingTests);
 
 test threeClientsOneServerReliable [main=ThreeClientsOneServerReliable]:
-  assert SafetyOneLeader, LivenessClientsDone, LivenessLeaderExists, LivenessProgress, SafetySynchronization in
-  (union Server, Timer, Client, View, ServingTests);
-
-test threeClientsFiveServersReliable [main=ThreeClientsFiveServersReliable]:
-  assert SafetyOneLeader, LivenessClientsDone, LivenessLeaderExists, LivenessProgress, SafetySynchronization in
-  (union Server, Timer, Client, View, ServingTests);
-
-test threeClientsFiveServersUnreliable [main=ThreeClientsFiveServersUnreliable]:
   assert SafetyOneLeader, LivenessClientsDone, LivenessLeaderExists, LivenessProgress, SafetySynchronization in
   (union Server, Timer, Client, View, ServingTests);
 

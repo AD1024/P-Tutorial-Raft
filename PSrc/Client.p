@@ -10,6 +10,7 @@ machine Client {
     var servers: set[machine];
     var ptr: int;
     var tId: int;
+    var retries: int;
     var currentCmd: Command;
     var view: View;
     var timer: Timer;
@@ -47,18 +48,23 @@ machine Client {
         entry {
             announce eClientWaitingResponse, (client=this, transId=tId);
             startTimer(timer);
+            retries = 0;
         }
 
         on eHeartbeatTimeout do {
-            print format("Client {0} timed out waiting for response {1}", this, tId);
-            broadcastToCluster();
+            print format("Client {0} timed out waiting for response {1}; current retries: {2}", this, tId, retries / 50);
+            if (retries % 50 == 0) {
+                broadcastToCluster();
+            }
+            retries = retries + 1;
             startTimer(timer);
         }
 
         on eRaftResponse do (resp: tRaftResponse) {
-            print format("Client {0} got response {1}", this, resp.transId);
             if (resp.transId == tId) {
+                print format("Client {0} got response {1}; #retries={2}", this, resp.transId, retries / 50);
                 announce eClientGotResponse, (client=this, transId=tId);
+                retries = 0;
                 goto SendOne;
             }
         }
@@ -66,10 +72,8 @@ machine Client {
 
     fun broadcastToCluster() {
         var s: machine;
-        var i: int;
         foreach (s in servers) {
             send s, eClientRequest, (transId=tId, client=this, cmd=currentCmd, sender=this);
-            i = i + 1;
         }
     }
 

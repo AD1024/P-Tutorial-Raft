@@ -59,6 +59,7 @@ machine Server {
 
     // var heartbeatTimer: Timer;
     var clientRequestQueue: seq[tClientRequest];
+    var clientRequestCache: map[Client, map[int, tRaftResponse]];
 
     start state Init {
         entry {}
@@ -73,6 +74,7 @@ machine Server {
             votesReceived = default(set[Server]);
             logs = default(seq[tServerLog]);
             clientRequestQueue = default(seq[tClientRequest]);
+            clientRequestCache = default(map[Client, map[int, tRaftResponse]]);
             viewServer = setup.viewServer;
 
             currentTerm = 0;
@@ -110,6 +112,9 @@ machine Server {
         }
 
         on eClientRequest do (payload: tClientRequest) {
+            if (checkClientRequestCache(payload)) {
+                return;
+            }
             if (leader != null) {
                 send leader, eClientRequest, forwardedRequest(payload);
             } else {
@@ -121,7 +126,10 @@ machine Server {
             // cancelTimer(electionTimer);
             if (payload.term >= currentTerm) {
                 printLog(format("heartbeat updated term from {0} to {1}", currentTerm, payload.term));
-                votedFor = null as Server;
+                if (payload.leader != leader) {
+                    votedFor = null as Server;
+                }
+                leader = payload.leader;
                 currentTerm = payload.term;
             }
             handleAppendEntries(payload);
@@ -172,6 +180,9 @@ machine Server {
         }
 
         on eClientRequest do (payload: tClientRequest) {
+            if (checkClientRequestCache(payload)) {
+                return;
+            }
             clientRequestQueue += (sizeof(clientRequestQueue), payload);
         }
 
@@ -204,6 +215,7 @@ machine Server {
         on eRequestVoteReply do (payload: tRequestVoteReply) {
             if (payload.term > currentTerm) {
                 currentTerm = payload.term;
+                votedFor = null as Server;
                 goto Follower;
             } else if (payload.voteGranted && payload.term == currentTerm) {
                 votesReceived += (payload.sender);
@@ -220,6 +232,7 @@ machine Server {
         on eRequestVote do (payload: tRequestVote)  {
             if (payload.term > currentTerm) {
                 currentTerm = payload.term;
+                votedFor = null as Server;
                 handleRequestVote(payload);
                 goto Follower;
             } else {
@@ -250,7 +263,9 @@ machine Server {
             // restartTimer(heartbeatTimer);
             announce eBecomeLeader, (term=currentTerm, leader=this);
             while (sizeof(clientRequestQueue) > 0) {
-                send this, eClientRequest, forwardedRequest(clientRequestQueue[0]);
+                if (!checkClientRequestCache(clientRequestQueue[0])) {
+                    send this, eClientRequest, forwardedRequest(clientRequestQueue[0]);
+                }
                 clientRequestQueue -= (0);
             }
             printLog(format("Become leader with Log={0}, commiteIndex={1}, lastApplied={2}", logs, commitIndex, lastApplied));
@@ -335,6 +350,9 @@ machine Server {
             var entries: seq[tServerLog];
             var i: int;
             // print format("Received client request {0}", payload);
+            if (checkClientRequestCache(payload)) {
+                return;
+            }
             if (payload.cmd.op == GET) {
                 // printLog(format("Leader received GET request from {0} with {1}", payload.client, payload));
                 // For simplicity, we assume reliable delivery to the client
@@ -394,6 +412,9 @@ machine Server {
             printLog(format("Reject vote with term {0} < currentTerm {1}", reply.term, currentTerm));
             send reply.candidate, eRequestVoteReply, (sender=this, term=currentTerm, voteGranted=false);
         } else {
+            if (currentTerm < reply.term) {
+                votedFor = null as Server;
+            }
             currentTerm = reply.term;
             if ((votedFor == null as Server || votedFor == reply.candidate)
                     && logUpToDateCheck(reply.lastLogIndex, reply.lastLogTerm)) {
@@ -506,7 +527,7 @@ machine Server {
                         i = i + 1;
                         j = j + 1;
                     }
-                    print format("Entries for {0} is {1}", target, entries);
+                    printLog(format("Entries for {0} is {1}", target, entries));
                     send target, eAppendEntries, (term=currentTerm,
                                                     leader=this,
                                                     prevLogIndex=prevIndex,
@@ -566,19 +587,34 @@ machine Server {
             kvStore = execResult.newState;
             printLog(format("leader committed and processed (by {0}), log: {1}", this, logs[lastApplied]));
             send logs[lastApplied].client, eRaftResponse, (client=logs[lastApplied].client, transId=logs[lastApplied].transId, result=execResult.result);
+            clientRequestCache[logs[lastApplied].client][logs[lastApplied].transId] = (client=logs[lastApplied].client, transId=logs[lastApplied].transId, result=execResult.result);
         }
     }
 
+    fun checkClientRequestCache(payload: tClientRequest): bool {
+        if (!(payload.client in clientRequestCache)) {
+            clientRequestCache[payload.client] = default(map[int, tRaftResponse]);
+        }
+        if (payload.transId in clientRequestCache[payload.client]) {
+            send payload.client, eRaftResponse, clientRequestCache[payload.client][payload.transId];
+            return true;
+        }
+        return false;
+    }
+
     fun printLog(msg: string) {
-        return;
+        // return;
         print format("{0}[{1}@{2}]: {3}", role, this, currentTerm, msg);
     }
 
     fun executeCommands() {
+        var execResult: ExecutionResult;
         printLog(format("commitIndex={0} lastApplied={1}", commitIndex, lastApplied));
         while (commitIndex > lastApplied) {
             lastApplied = lastApplied + 1;
-            kvStore = execute(kvStore, logs[lastApplied].command).newState;
+            execResult = execute(kvStore, logs[lastApplied].command);
+            kvStore = execResult.newState;
+            clientRequestCache[logs[lastApplied].client][logs[lastApplied].transId] = (client=logs[lastApplied].client, transId=logs[lastApplied].transId, result=execResult.result);
         }
     }
 

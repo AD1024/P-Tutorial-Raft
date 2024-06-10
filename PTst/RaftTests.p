@@ -60,6 +60,42 @@ machine OneClientFiveServersUnreliable {
     }
 }
 
+machine OneClientThreeServersReliable {
+    start state Init {
+        entry {
+            var view: View;
+            view = setUpCluster(3, 1, 0, 0, 0);
+        }
+    }
+}
+
+machine OneClientThreeServersUnreliable {
+    start state Init {
+        entry {
+            var view: View;
+            view = setUpCluster(3, 1, 5, 5, 1);
+        }
+    }
+}
+
+machine TwoClientsThreeServersReliable {
+    start state Init {
+        entry {
+            var view: View;
+            view = setUpCluster(3, 2, 0, 0, 0);
+        }
+    }
+}
+
+machine TwoClientsThreeServersUnreliable {
+    start state Init {
+        entry {
+            var view: View;
+            view = setUpCluster(3, 2, 5, 5, 1);
+        }
+    }
+}
+
 machine ThreeClientsOneServerReliable {
     start state Init {
         entry {

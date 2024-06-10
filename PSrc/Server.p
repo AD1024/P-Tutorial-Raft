@@ -570,6 +570,7 @@ machine Server {
     }
 
     fun printLog(msg: string) {
+        return;
         print format("{0}[{1}@{2}]: {3}", role, this, currentTerm, msg);
     }
 

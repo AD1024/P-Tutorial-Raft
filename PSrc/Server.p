@@ -126,11 +126,11 @@ machine Server {
             // cancelTimer(electionTimer);
             if (payload.term >= currentTerm) {
                 printLog(format("heartbeat updated term from {0} to {1}", currentTerm, payload.term));
-                if (payload.leader != leader) {
+                if (leader != null as Server && payload.leader != leader) {
                     votedFor = null as Server;
                 }
                 leader = payload.leader;
-                currentTerm = payload.term;
+                updateTermAndVote(payload.term);
             }
             handleAppendEntries(payload);
             if (leader != null) {
@@ -193,8 +193,7 @@ machine Server {
         on eAppendEntries do (payload: tAppendEntries) {
             if (payload.term > currentTerm) {
                 printLog(format("Received heartbeat from a leader with higher term {0}", payload.term));
-                currentTerm = payload.term;
-                votedFor = null as Server;
+                updateTermAndVote(payload.term);
                 handleAppendEntries(payload);
                 goto Follower;
             } else {
@@ -206,16 +205,14 @@ machine Server {
         on eAppendEntriesReply do (payload: tAppendEntriesReply) {
             if (payload.term > currentTerm) {
                 printLog(format("Received AppendEntriesReply with higher term {0}", payload.term));
-                currentTerm = payload.term;
-                votedFor = null as Server;
+                updateTermAndVote(payload.term);
                 goto Follower;
             }
         }
 
         on eRequestVoteReply do (payload: tRequestVoteReply) {
             if (payload.term > currentTerm) {
-                currentTerm = payload.term;
-                votedFor = null as Server;
+                updateTermAndVote(payload.term);
                 goto Follower;
             } else if (payload.voteGranted && payload.term == currentTerm) {
                 votesReceived += (payload.sender);
@@ -231,8 +228,7 @@ machine Server {
         
         on eRequestVote do (payload: tRequestVote)  {
             if (payload.term > currentTerm) {
-                currentTerm = payload.term;
-                votedFor = null as Server;
+                updateTermAndVote(payload.term);
                 handleRequestVote(payload);
                 goto Follower;
             } else {
@@ -260,7 +256,6 @@ machine Server {
             leader = this;
             nextIndex = fillMap(this, nextIndex, peers, sizeof(logs));
             matchIndex = fillMap(this, matchIndex, peers, -1);
-            // restartTimer(heartbeatTimer);
             announce eBecomeLeader, (term=currentTerm, leader=this);
             while (sizeof(clientRequestQueue) > 0) {
                 if (!checkClientRequestCache(clientRequestQueue[0])) {
@@ -290,9 +285,7 @@ machine Server {
         on eRequestVoteReply do (payload: tRequestVoteReply) {
             if (payload.term > currentTerm) {
                 printLog(format("received RequestVoteReply with higher term {0}", payload.term));
-                currentTerm = payload.term;
-                votedFor = null as Server;
-                leader = null as Server;
+                updateTermAndVote(payload.term);
                 goto Follower;
             }
         }
@@ -306,7 +299,8 @@ machine Server {
         on eAppendEntries do (payload: tAppendEntries) {
             if (payload.term > currentTerm) {
                 printLog(format("received AppendEntries with higher term {0}; handle then step down", payload.term));
-                currentTerm = payload.term;
+                // currentTerm = payload.term;
+                updateTermAndVote(payload.term);
                 handleAppendEntries(payload);
                 becomeFollower(payload.term);
             } else if (payload.term < currentTerm) {
@@ -325,9 +319,7 @@ machine Server {
             }
             if (payload.term > currentTerm) {
                 printLog(format("received reply from another leader with term {0} > currentTerm {1}", payload.term, currentTerm));
-                currentTerm = payload.term;
-                votedFor = null as Server;
-                leader = null as Server;
+                updateTermAndVote(payload.term);
                 goto Follower;
             }
             if (payload.success) {
@@ -412,13 +404,10 @@ machine Server {
             printLog(format("Reject vote with term {0} < currentTerm {1}", reply.term, currentTerm));
             send reply.candidate, eRequestVoteReply, (sender=this, term=currentTerm, voteGranted=false);
         } else {
-            if (currentTerm < reply.term) {
-                votedFor = null as Server;
-            }
-            currentTerm = reply.term;
+            updateTermAndVote(reply.term);
             if ((votedFor == null as Server || votedFor == reply.candidate)
                     && logUpToDateCheck(reply.lastLogIndex, reply.lastLogTerm)) {
-                printLog(format("Grant vote to {0}", reply.candidate));
+                printLog(format("Grant vote to {0} (prev. votedFor={1})", reply.candidate, votedFor));
                 votedFor = reply.candidate;
                 send reply.candidate, eRequestVoteReply, (sender=this, term=currentTerm, voteGranted=true);
             } else {
@@ -635,8 +624,15 @@ machine Server {
 
     fun becomeFollower(term: int) {
         // cancelTimer(electionTimer);
-        currentTerm = term;
+        updateTermAndVote(term);
         goto Follower;
+    }
+
+    fun updateTermAndVote(term: int) {
+        if (term > currentTerm) {
+            votedFor = null as Server;
+        }
+        currentTerm = term;
     }
 
     fun termsOfLos(): seq[int] {

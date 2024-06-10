@@ -12,9 +12,10 @@ machine View {
 
     var followers: set[Server];
     var leaders: set[Server];
+    var candidates: set[Server];
+    var requestVotePendingSet: set[Server];
     var serverLogs: map[Server, seq[tServerLog]];
     var lastSeenLogs: map[Server, int];
-    var candidates: set[Server];
     var candidateRoundMap: map[Server, int];
     var noLeaderRounds: int;
 
@@ -30,6 +31,7 @@ machine View {
             // at a moment, there can be multiple leaders, e.g. partitioned network
             leaders = default(set[Server]);
             candidates = default(set[Server]);
+            requestVotePendingSet = default(set[Server]);
             serverLogs = default(map[Server, seq[tServerLog]]);
             lastSeenLogs = default(map[Server, int]);
             candidateRoundMap = default(map[Server, int]);
@@ -115,13 +117,21 @@ machine View {
                 }
             }
             if (sizeof(leaders) == 0) {
-                if (noLeaderRounds == 25) {
-                    server = mostUpToDateServer();
+                if (noLeaderRounds % 25 == 0 && sizeof(requestVotePendingSet) > 0) {
+                    if ($) {
+                        server = mostUpToDateServer(requestVotePendingSet);
+                    } else {
+                        server = choose(requestVotePendingSet);
+                    }
+                    requestVotePendingSet -= (server);
                     print format("NoLeader rounds exceeded, trigger election on {0}", server);
                     send server, eElectionTimeout;
                     candidates += (server);
                     followers -= (server);
                     noLeaderRounds = 0;
+                }
+                if (sizeof(requestVotePendingSet) == 0) {
+                    requestVotePendingSet = servers;
                 }
                 noLeaderRounds = noLeaderRounds + 1;
             } else {
@@ -181,7 +191,7 @@ machine View {
         ignore eClientFinished, eHeartbeatTimeout, eViewChangedCandidate, eNotifyLog, eViewChangedLeader, eViewChangedFollower;
     }
 
-    fun mostUpToDateServer(): Server {
+    fun mostUpToDateServer(choices: set[Server]): Server {
         var server: Server;
         var candidate: Server;
         var term: int;
@@ -190,7 +200,7 @@ machine View {
         length = 0;
         candidate = null as Server;
         print format("Choose candidate: server |-> logs: {0}", serverLogs);
-        foreach (server in keys(serverLogs)) {
+        foreach (server in servers) {
             if (candidate == null) {
                 candidate = server;
                 term = lastLogTerm(serverLogs[server]);

@@ -191,7 +191,7 @@ machine Server {
         }
 
         on eAppendEntries do (payload: tAppendEntries) {
-            if (payload.term > currentTerm) {
+            if (payload.term >= currentTerm) {
                 printLog(format("Received heartbeat from a leader with higher term {0}", payload.term));
                 updateTermAndVote(payload.term);
                 handleAppendEntries(payload);
@@ -311,7 +311,6 @@ machine Server {
         }
 
         on eAppendEntriesReply do (payload: tAppendEntriesReply) {
-            // print format("Leader({0}) received AppendEntriesReply from {1}: {2}", this, payload.sender, payload);
             printLog(format("Leader({0}, {1}) received AppendEntriesReply from {2}: {3}", this, currentTerm, payload.sender, payload));
             if (payload.term < currentTerm) {
                 printLog("Ignore AppendEntriesReply with outdated term");
@@ -328,10 +327,17 @@ machine Server {
                 matchIndex[payload.sender] = Max(matchIndex[payload.sender], payload.matchedIndex);
                 leaderCommits();
             } else {
+                if (payload.matchedIndex < 0) {
+                    // a rejection of me as a leader in an earlier term
+                    // this can happen when me and the other node simultaneously become a candidate
+                    // the other node received my heartbeat from the previous term and sent me a rejection
+                    // but currently, I am already at the newer term, so I can safely ignore this rejection
+                    printLog(format("outdated rejection with term={0}, matchedIndex={1}", payload.term, payload.matchedIndex));
+                    return;
+                }
                 // rejected because of log mismatch
                 // now, payload.matchedIndex is the index of the (potentially) first mismatched term
                 printLog(format("re-sync with {0} at index {1}", payload.sender, payload.matchedIndex));
-                assert payload.matchedIndex >= 0, "matchedIndex should be non-negative";
                 nextIndex[payload.sender] = Min(payload.matchedIndex, nextIndex[payload.sender]);
             }
         }
@@ -346,7 +352,6 @@ machine Server {
                 return;
             }
             if (payload.cmd.op == GET) {
-                // printLog(format("Leader received GET request from {0} with {1}", payload.client, payload));
                 // For simplicity, we assume reliable delivery to the client
                 // Network failures are easy to handle in this case, though
                 send payload.client, eRaftResponse, (client=payload.client,

@@ -72,6 +72,7 @@ machine View {
             foreach (server in servers) {
                 send server, eServerInit, (myId=i, cluster=servers, viewServer=this);
                 followers += (server);
+                i = i + 1;
             }
             triggerTimer = new Timer((user=this, timeoutEvent=eHeartbeatTimeout));
             clientsDone = default(set[machine]);

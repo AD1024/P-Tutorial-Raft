@@ -650,6 +650,7 @@ machine Server {
         // Execute the command from lastApplied + 1 to commitIndex
         while (lastApplied < commitIndex) {
             lastApplied = lastApplied + 1;
+            announce eEntryApplied, (index=lastApplied, log=logs[lastApplied]);
             execResult = execute(kvStore, logs[lastApplied].command);
             kvStore = execResult.newState;
             clientRequestCache[logs[lastApplied].client][logs[lastApplied].transId] = (client=logs[lastApplied].client, transId=logs[lastApplied].transId, result=execResult.result);

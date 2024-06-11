@@ -9,37 +9,37 @@ module ServingTests = { OneClientOneServerReliable,
                         ThreeClientsOneServerReliable};
 
 test fiveServers [main=LeaderElectionFiveServers]:
-  assert SafetyOneLeader, LivenessLeaderExists in
+  assert SafetyOneLeader in
   (union Server, Client, Timer, LeaderElections, View);
 
 test oneClientOneServerReliable [main=OneClientOneServerReliable]:
-  assert SafetyOneLeader, LivenessClientsDone, LivenessLeaderExists, LivenessProgress, SafetySynchronization in
+  assert SafetyOneLeader, SafetyLeaderCompleteness, SafetyStateMachine, SafetyLogMatching, LivenessClientsDone, LivenessProgress, SafetySynchronization in
   (union Server, Timer, Client, View, ServingTests);
 
 test oneClientThreeServersReliable [main=OneClientThreeServersReliable]:
-  assert SafetyOneLeader, LivenessClientsDone, LivenessLeaderExists, LivenessProgress, SafetySynchronization in
+  assert SafetyOneLeader, SafetyLeaderCompleteness, SafetyStateMachine, SafetyLogMatching, LivenessClientsDone, LivenessProgress, SafetySynchronization in
   (union Server, Timer, Client, View, ServingTests);
 
 test oneClientThreeServersUnreliable [main=OneClientThreeServersUnreliable]:
-  assert SafetyOneLeader, LivenessClientsDone, LivenessLeaderExists, LivenessProgress, SafetySynchronization in
+  assert SafetyOneLeader, SafetyLeaderCompleteness, SafetyStateMachine, SafetyLogMatching, LivenessClientsDone, LivenessProgress, SafetySynchronization in
   (union Server, Timer, Client, View, ServingTests);
 
 test oneClientFiveServersReliable [main=OneClientFiveServersReliable]:
-  assert SafetyOneLeader, LivenessClientsDone, LivenessLeaderExists, LivenessProgress, SafetySynchronization in
+  assert SafetyOneLeader, SafetyLeaderCompleteness, SafetyStateMachine, SafetyLogMatching, LivenessClientsDone, LivenessProgress, SafetySynchronization in
   (union Server, Timer, Client, View, ServingTests);
 
 test oneClientFiveServersUnreliable [main=OneClientFiveServersUnreliable]:
-  assert SafetyOneLeader, LivenessClientsDone, LivenessLeaderExists, LivenessProgress, SafetySynchronization in
+  assert SafetyOneLeader, SafetyLeaderCompleteness, SafetyStateMachine, SafetyLogMatching, LivenessClientsDone, LivenessProgress, SafetySynchronization in
   (union Server, Timer, Client, View, ServingTests);
 
 test threeClientsOneServerReliable [main=ThreeClientsOneServerReliable]:
-  assert SafetyOneLeader, LivenessClientsDone, LivenessLeaderExists, LivenessProgress, SafetySynchronization in
+  assert SafetyOneLeader, SafetyLeaderCompleteness, SafetyStateMachine, SafetyLogMatching, LivenessClientsDone, LivenessProgress, SafetySynchronization in
   (union Server, Timer, Client, View, ServingTests);
 
 test twoClientsThreeServersReliable [main=TwoClientsThreeServersReliable]:
-  assert SafetyOneLeader, LivenessClientsDone, LivenessLeaderExists, LivenessProgress, SafetySynchronization in
+  assert SafetyOneLeader, SafetyLeaderCompleteness, SafetyStateMachine, SafetyLogMatching, LivenessClientsDone, LivenessProgress, SafetySynchronization in
   (union Server, Timer, Client, View, ServingTests);
 
 test twoClientsThreeServersUnreliable [main=TwoClientsThreeServersUnreliable]:
-  assert SafetyOneLeader, LivenessClientsDone, LivenessLeaderExists, LivenessProgress, SafetySynchronization in
+  assert SafetyOneLeader, SafetyLeaderCompleteness, SafetyStateMachine, SafetyLogMatching, LivenessClientsDone, LivenessProgress, SafetySynchronization in
   (union Server, Timer, Client, View, ServingTests);

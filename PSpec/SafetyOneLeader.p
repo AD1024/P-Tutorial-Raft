@@ -1,4 +1,4 @@
-event eBecomeLeader: (term:int, leader:Server);
+event eBecomeLeader: (term:int, leader:Server, log: seq[tServerLog], commitIndex: int);
 
 spec SafetyOneLeader observes eBecomeLeader{
     var termToLeader: map[int, Server];
@@ -6,7 +6,7 @@ spec SafetyOneLeader observes eBecomeLeader{
         entry {
             termToLeader = default(map[int, Server]);
         }
-        on eBecomeLeader do (payload: (term:int, leader:Server)) {
+        on eBecomeLeader do (payload: (term:int, leader:Server, log: seq[tServerLog], commitIndex: int)) {
             if (payload.term in keys(termToLeader)) {
                 assert termToLeader[payload.term] == payload.leader, format("At term {0} there are multiple leaders: {1} and {2}.", payload.term, termToLeader[payload.term], payload.leader);
             }

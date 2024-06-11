@@ -270,7 +270,7 @@ machine Server {
             // instantiate the nextIndex and matchIndex
             nextIndex = fillMap(this, nextIndex, peers, sizeof(logs));
             matchIndex = fillMap(this, matchIndex, peers, -1);
-            announce eBecomeLeader, (term=currentTerm, leader=this);
+            announce eBecomeLeader, (term=currentTerm, leader=this, log=logs, commitIndex=commitIndex);
             // first exhaust the client request queu on its own
             while (sizeof(clientRequestQueue) > 0) {
                 if (!checkClientRequestCache(clientRequestQueue[0])) {
@@ -616,6 +616,7 @@ machine Server {
         // commit all the logs from lastApplied + 1 to commitIndex
         while (lastApplied < commitIndex) {
             lastApplied = lastApplied + 1;
+            announce eEntryApplied, (index=lastApplied, log=logs[lastApplied]);
             execResult = execute(kvStore, logs[lastApplied].command);
             kvStore = execResult.newState;
             printLog(format("leader committed and processed (by {0}), log: {1}", this, logs[lastApplied]));

@@ -1,8 +1,20 @@
+/*
+* A client that uses the Raft cluster.
+* The client sends a sequence of commands to the cluster.
+* It does not move on the next command until it receives a response from the cluster.
+* The client retries sending the command if a certain amount of heartbeats timeouts occur.
+*/
+
+// Client requests
 type tClientRequest = (transId: int, client: Client, cmd: Command, sender: machine);
 event eClientRequest: tClientRequest;
+// The event of notifying the monitor that the client is waiting for a response
 event eClientWaitingResponse: (client: Client, transId: int);
+// The event of notifying the monitor that the client got a response for a transaction
 event eClientGotResponse: (client: Client, transId: int);
+// The event of notifying the monitor that the client finished
 event eClientFinishedMonitor: Client;
+// The event of notifying the view service that the client finished
 event eClientFinished: Client;
 
 machine Client {
@@ -33,8 +45,10 @@ machine Client {
             print format("{0} is at {1}", this, ptr);
             print format("Worklist {0}", worklist);
             if (sizeof(worklist) == ptr) {
+                // if no more work to do, go to Done
                 goto Done;
             } else {
+                // get the current command and increase transaction id
                 currentCmd = worklist[ptr];
                 ptr = ptr + 1;
                 tId = tId + 1;
@@ -54,6 +68,7 @@ machine Client {
         on eHeartbeatTimeout do {
             print format("Client {0} timed out waiting for response {1}; current retries: {2}", this, tId, retries / 50);
             if (retries % 50 == 0) {
+                // retries every 50 heartbeats
                 broadcastToCluster();
             }
             retries = retries + 1;

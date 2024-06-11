@@ -1,22 +1,47 @@
+/******************************************************************
+* A View service that manages the view of the cluster.
+* It is responsible for maintaining roles of, injecting failures to
+* and shutting down the nodes.
+*******************************************************************/
+
+// Shutdown message will be sent to the cluster when
+// client notifies the view service that it has finished all requests AND got all responses
 event eShutdown;
+// A node can notify the view service about its log entires
+// This is used for choosing servers that should receive an election timeout
 event eNotifyLog: (timestamp: int, server: Server, log: seq[tServerLog]);
 
 machine View {
+    // the cluster nodes
     var servers: set[Server];
+    // the probability that a node got an election timeout [0, 100]
+    // this is used to model network failure (i.e. a follower does not receive heartbeat)
     var timeoutRate: int;
+    // the probability that a node crashes [0, 100]
     var crashRate: int;
+    // the total number failures that can be injected
     var numFailures: int;
+    // the timer for the view service to perform an action
     var triggerTimer: Timer;
+    // the set of clients that have finished all requests
     var clientsDone: set[machine];
+    // the number of clients
     var numClients: int;
 
+    // the set of followers, leaders and candidates
     var followers: set[Server];
     var leaders: set[Server];
     var candidates: set[Server];
+    // the set of servers that have not sent a `eRequestVote` message
+    // this set will be exahusted when the view service
+    // cannot detect any leader in the cluster
     var requestVotePendingSet: set[Server];
+    // the logs of nodes
     var serverLogs: map[Server, seq[tServerLog]];
+    // the last seen log of each node; prevent update the entry using older logs
     var lastSeenLogs: map[Server, int];
     var candidateRoundMap: map[Server, int];
+    // number of rounds of actions where the view service cannot detect any leader
     var noLeaderRounds: int;
 
     start state Init {
@@ -69,6 +94,7 @@ machine View {
         }
 
         on eNotifyLog do (payload: (timestamp:int, server: Server, log: seq[tServerLog])) {
+            // only track the most up-to-date logs
             if (!(payload.server in keys(lastSeenLogs)) || lastSeenLogs[payload.server] < payload.timestamp) {
                 lastSeenLogs[payload.server] = payload.timestamp;
                 serverLogs[payload.server] = payload.log;
@@ -76,30 +102,23 @@ machine View {
         }
 
         on eViewChangedLeader do (server: Server) {
+            // server change its role to a leader
             noLeaderRounds = 0;
             leaders += (server);
             followers -= (server);
             candidates -= (server);
-            if (server in keys(candidateRoundMap)) {
-                candidateRoundMap -= (server);
-            }
         }
 
         on eViewChangedFollower do (server: Server) {
+            // server change its role to a follower
             followers += (server);
             candidates -= (server);
-            if (server in keys(candidateRoundMap)) {
-                candidateRoundMap -= (server);
-            }
             leaders -= (server);
         }
 
         on eViewChangedCandidate do (server: Server) {
+            // server change its role to a candidate
             candidates += (server);
-            if (!(server in keys(candidateRoundMap))) {
-                candidateRoundMap += (server, choose(50) + 3);
-            }
-            candidateRoundMap[server] = choose(10) + 3;
             followers -= (server);
             leaders -= (server);
         }
@@ -107,17 +126,10 @@ machine View {
         on eHeartbeatTimeout do {
             var server: Server;
             print format("Current view: leaders={0} followers={1} candidates={2}", leaders, followers, candidates);
-            foreach (server in keys(candidateRoundMap)) {
-                if (candidateRoundMap[server] == 0) {
-                    print format("Candidate {0} has timed out", server);
-                    send server, eElectionTimeout;
-                    break;
-                } else {
-                    candidateRoundMap[server] = candidateRoundMap[server] - 1;
-                }
-            }
             if (sizeof(leaders) == 0) {
                 if (noLeaderRounds % 25 == 0 && sizeof(requestVotePendingSet) > 0) {
+                    // non-deterministically choose a server to trigger an election
+                    // either the current most up-to-date server or a random server
                     if ($) {
                         server = mostUpToDateServer(requestVotePendingSet);
                     } else {
@@ -192,6 +204,8 @@ machine View {
     }
 
     fun mostUpToDateServer(choices: set[Server]): Server {
+        // get the server with the most up-to-date logs (in the view of the view service)
+        // it might not be the real most up-to-date server in the cluster because of the message delay
         var server: Server;
         var candidate: Server;
         var term: int;

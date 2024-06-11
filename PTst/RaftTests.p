@@ -73,7 +73,7 @@ machine OneClientThreeServersUnreliable {
     start state Init {
         entry {
             var view: View;
-            view = setUpCluster(3, 1, 5, 5, 5);
+            view = setUpCluster(3, 1, 5, 5, 100);
         }
     }
 }

@@ -1,3 +1,7 @@
+/******************************************************************
+* A Timer machine that timeouts non-deterministically.
+*******************************************************************/
+
 event eStartTimer;
 event eElectionTimeout;
 event eHeartbeatTimeout;
@@ -19,7 +23,6 @@ machine Timer {
 
     state TimerIdle {
         on eStartTimer do {
-            // goto TimerRunning;
             goto TimerTick;
         }
         on eShutdown goto TimerShutdown;
@@ -44,6 +47,7 @@ machine Timer {
 
     fun checkTick() {
         if ($) {
+            // non-deterministic timeout
             send holder, timeoutEvent;
             goto TimerIdle;
         } else {

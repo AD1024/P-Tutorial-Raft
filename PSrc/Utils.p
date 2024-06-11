@@ -17,6 +17,7 @@ fun lastLogIndex(log: seq[tServerLog]): int {
 }
 
 fun getLogTerm(log: seq[tServerLog], index: int): int {
+    // get the term of the log entry at index.
     if (index < 0 || index >= sizeof(log)) {
         return 0;
     } else {
@@ -59,6 +60,7 @@ fun fillMap(self: machine, m: map[Server, int], servers: set[Server], value: int
 }
 
 fun broadcastRequest(self: Server, peers: set[Server], e: event, payload: any) {
+    // broadcast a message to nodes except for itself.
     var peer: Server;
     foreach(peer in peers) {
         if (peer != self) {

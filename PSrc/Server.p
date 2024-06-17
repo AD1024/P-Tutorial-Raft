@@ -13,7 +13,9 @@ event eRaftResponse: tRaftResponse;
 event eServerInit: (myId: ServerId, cluster: set[Server], viewServer: View);
 
 // Vote request and response
-type tRequestVote = (term: int, candidate: Server, lastLogIndex: int, lastLogTerm: int);
+type TermId = int;
+type LogIndex = int;
+type tRequestVote = (term: TermId, candidate: Server, lastLogIndex: LogIndex, lastLogTerm: LogIndex);
 event eRequestVote: tRequestVote;
 type tRequestVoteReply = (sender: Server, term: int, voteGranted: bool);
 event eRequestVoteReply: tRequestVoteReply;

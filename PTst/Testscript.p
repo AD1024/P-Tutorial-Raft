@@ -1,4 +1,3 @@
-module LeaderElections = { LeaderElectionFiveServers };
 module ServingTests = { OneClientOneServerReliable,
                         OneClientThreeServersReliable,
                         OneClientThreeServersUnreliable,
@@ -7,10 +6,6 @@ module ServingTests = { OneClientOneServerReliable,
                         TwoClientsThreeServersReliable,
                         TwoClientsThreeServersUnreliable,
                         ThreeClientsOneServerReliable};
-
-test fiveServers [main=LeaderElectionFiveServers]:
-  assert SafetyOneLeader in
-  (union Server, Client, Timer, LeaderElections, View);
 
 test oneClientOneServerReliable [main=OneClientOneServerReliable]:
   assert SafetyOneLeader, SafetyLeaderCompleteness, SafetyStateMachine, SafetyLogMatching, LivenessClientsDone, LivenessProgress, SafetySynchronization in

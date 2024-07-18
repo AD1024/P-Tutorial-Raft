@@ -21,9 +21,9 @@ spec SafetyLogMatching observes eNotifyLog {
                 while (j < sizeof(keys(allLogs))) {
                     s2 = keys(allLogs)[j];
                     if (sizeof(allLogs[s1]) > sizeof(allLogs[s2])) {
-                        checkLogMatching(s2, s1, allLogs[s2], allLogs[s1]);
+                        assert checkLogMatching(allLogs[s2], allLogs[s1]);
                     } else {
-                        checkLogMatching(s1, s2, allLogs[s1], allLogs[s2]);
+                        assert checkLogMatching(allLogs[s1], allLogs[s2]);
                     }
                     j = j + 1;
                 }
@@ -32,19 +32,29 @@ spec SafetyLogMatching observes eNotifyLog {
         }
     }
 
-    fun checkLogMatching(s1: Server, s2: Server, logsA: seq[tServerLog], logsB: seq[tServerLog]) {
+    fun checkLogMatching(xs: seq[tServerLog], ys: seq[tServerLog]): bool {
         var i: int;
         var highestMatch: int;
+        var logsA: seq[tServerLog];
+        var logsB: seq[tServerLog];
+        if (sizeof(xs) > sizeof(ys)) {
+            logsA = ys;
+            logsB = xs;
+        } else {
+            logsA = xs;
+            logsB = ys;
+        }
         i = sizeof(logsA) - 1;
         while (i >= 0 && logsA[i] != logsB[i]) {
            i = i - 1;
         }
         highestMatch = i;
         while (i >= 0) {
-            assert logsA[i] == logsB[i],
-            format("Log not matching between {0} and {1} ({2} != {3}), while the highestMatch={4}",
-                    s1, s2, logsA[i], logsB[i], logsA[highestMatch]);
+            if (logsA[i] != logsB[i]) {
+                return false;
+            }
             i = i - 1;
         }
+        return true;
     }
 }

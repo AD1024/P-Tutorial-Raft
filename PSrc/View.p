@@ -9,7 +9,8 @@
 event eShutdown;
 // A node can notify the view service about its log entires
 // This is used for choosing servers that should receive an election timeout
-event eNotifyLog: (timestamp: int, server: Server, log: seq[tServerLog]);
+type tTS = int;
+event eNotifyLog: (timestamp: tTS, server: Server, log: seq[tServerLog]);
 
 machine View {
     // the cluster nodes
@@ -126,7 +127,7 @@ machine View {
 
         on eHeartbeatTimeout do {
             var server: Server;
-            print format("Current view: leaders={0} followers={1} candidates={2}", leaders, followers, candidates);
+            // print format("Current view: leaders={0} followers={1} candidates={2}", leaders, followers, candidates);
             if (sizeof(leaders) == 0) {
                 if (noLeaderRounds % 25 == 0 && sizeof(requestVotePendingSet) > 0) {
                     // non-deterministically choose a server to trigger an election
@@ -137,7 +138,7 @@ machine View {
                         server = choose(requestVotePendingSet);
                     }
                     requestVotePendingSet -= (server);
-                    print format("NoLeader rounds exceeded, trigger election on {0}", server);
+                    // print format("NoLeader rounds exceeded, trigger election on {0}", server);
                     send server, eElectionTimeout;
                     candidates += (server);
                     followers -= (server);
@@ -153,7 +154,7 @@ machine View {
                 }
                 foreach (server in followers) {
                     if (choose(100) < timeoutRate && numFailures > 0) {
-                        print format("Failure Injection: timeout a follower {0}", server);
+                        // print format("Failure Injection: timeout a follower {0}", server);
                         send server, eElectionTimeout;
                         numFailures = numFailures - 1;
                         startTimer(triggerTimer);
@@ -162,7 +163,7 @@ machine View {
                 }
                 foreach (server in leaders) {
                     if (choose(100) < crashRate && numFailures > 0) {
-                        print format("Failure Injection: crash a leader {0}", server);
+                        // print format("Failure Injection: crash a leader {0}", server);
                         send server, eReset;
                         numFailures = numFailures - 1;
                         startTimer(triggerTimer);
@@ -171,7 +172,7 @@ machine View {
                 }
                 foreach (server in candidates) {
                     if (choose(100) < crashRate && numFailures > 0) {
-                        print format("Failure Injection: crash a candidate {0}", server);
+                        // print format("Failure Injection: crash a candidate {0}", server);
                         send server, eReset;
                         numFailures = numFailures - 1;
                         startTimer(triggerTimer);
@@ -214,7 +215,7 @@ machine View {
         term = 0;
         length = 0;
         candidate = null as Server;
-        print format("Choose candidate: server |-> logs: {0}", serverLogs);
+        // print format("Choose candidate: server |-> logs: {0}", serverLogs);
         foreach (server in servers) {
             if (candidate == null) {
                 candidate = server;

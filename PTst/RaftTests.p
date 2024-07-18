@@ -1,4 +1,7 @@
+event eRaftConfigurations: (clusterSize: int, quorumSize: int);
+
 fun setUpCluster(numServers: int, numClients: int, timeoutRate: int, crashRate: int, numFailures: int): View {
+    announce eRaftConfigurations, (clusterSize=numServers, quorumSize=numServers / 2 + 1);
     return new View((numServers=numServers, numClients=numClients,
                                 timeoutRate=timeoutRate, crashRate=crashRate, numFailures=numFailures));
 }
@@ -26,7 +29,7 @@ fun randomWorkload(numCmd: int): seq[Command] {
             cmds += (i, (op=PUT, key=key, value=choose(1024)));
         } else {
             // GET
-            cmds += (i, (op=GET, key=key, value=null));
+            cmds += (i, (op=GET, key=key, value=-1));
         }
         i = i + 1;
     }

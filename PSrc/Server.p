@@ -4,9 +4,10 @@
 * This implementation does not include log compaction / cluster reconfiguration.
 ******************************************************************************/
 type ServerId = int;
+type TransId = int;
 
 // Response message to the client
-type tRaftResponse = (client: Client, transId: int, result: any);
+type tRaftResponse = (client: Client, transId: TransId, result: Result);
 event eRaftResponse: tRaftResponse;
 
 // Server initialization message
@@ -15,16 +16,21 @@ event eServerInit: (myId: ServerId, cluster: set[Server], viewServer: View);
 // Vote request and response
 type TermId = int;
 type LogIndex = int;
-type tRequestVote = (term: TermId, candidate: Server, lastLogIndex: LogIndex, lastLogTerm: LogIndex);
+type tRequestVote = (term: TermId, candidate: Server, lastLogIndex: LogIndex, lastLogTerm: TermId);
 event eRequestVote: tRequestVote;
-type tRequestVoteReply = (sender: Server, term: int, voteGranted: bool);
+type tRequestVoteReply = (sender: Server, term: TermId, voteGranted: bool);
 event eRequestVoteReply: tRequestVoteReply;
 
 // Heartbeat message and response
-type tAppendEntries = (term: int, leader: Server, prevLogIndex: int,
-                       prevLogTerm: int, entries: seq[tServerLog], leaderCommit: int);
+type tAppendEntries = (term: TermId, leader: Server, prevLogIndex: LogIndex,
+                       prevLogTerm: TermId, entries: seq[tServerLog], leaderCommit: LogIndex);
+
+fun termGT(t1: TermId, t2: TermId): bool {
+    return t1 > t2;
+}
+
 event eAppendEntries: tAppendEntries;
-type tAppendEntriesReply = (sender: Server, term: int, success: bool, matchedIndex: int);
+type tAppendEntriesReply = (sender: Server, term: TermId, success: bool, matchedIndex: LogIndex);
 event eAppendEntriesReply: tAppendEntriesReply;
 
 // Resetting a server (to model crashes)
@@ -36,7 +42,19 @@ event eViewChangedLeader: Server;
 event eViewChangedCandidate: Server;
 
 // server logs
-type tServerLog = (term: int, command: Command, client: Client, transId: int);
+type tServerLog = (term: TermId, command: Command, client: Client, transId: TransId);
+
+fun TermLT(t1: TermId, t2: TermId): bool {
+    return t1 < t2;
+}
+
+fun IsSuccess(s: bool): bool {
+    return s;
+}
+
+fun IsFailure(s: bool): bool {
+    return !s;
+}
 
 // A node in the Raft cluster
 machine Server {
@@ -538,7 +556,7 @@ machine Server {
         var prevTerm: int;
         var entries: seq[tServerLog];
         assert this == leader, "Only leader can broadcast AppendEntries";
-        print format("Broadcasting AppendEntries with log {0}", logs);
+        // print format("Broadcasting AppendEntries with log {0}", logs);
         foreach (target in peers) {
             if (this != target) {
                 entries = default(seq[tServerLog]);
@@ -618,7 +636,7 @@ machine Server {
         // commit all the logs from lastApplied + 1 to commitIndex
         while (lastApplied < commitIndex) {
             lastApplied = lastApplied + 1;
-            announce eEntryApplied, (index=lastApplied, log=logs[lastApplied]);
+            announce eEntryApplied, (logIndex=lastApplied, log=logs[lastApplied]);
             execResult = execute(kvStore, logs[lastApplied].command);
             kvStore = execResult.newState;
             printLog(format("leader committed and processed (by {0}), log: {1}", this, logs[lastApplied]));
@@ -643,7 +661,7 @@ machine Server {
 
     fun printLog(msg: string) {
         // return;
-        print format("{0}[{1}@{2}]: {3}", role, this, currentTerm, msg);
+        // print format("{0}[{1}@{2}]: {3}", role, this, currentTerm, msg);
     }
 
     fun executeCommands() {
@@ -652,14 +670,14 @@ machine Server {
         // Execute the command from lastApplied + 1 to commitIndex
         while (lastApplied < commitIndex) {
             lastApplied = lastApplied + 1;
-            announce eEntryApplied, (index=lastApplied, log=logs[lastApplied]);
+            announce eEntryApplied, (logIndex=lastApplied, log=logs[lastApplied]);
             execResult = execute(kvStore, logs[lastApplied].command);
             kvStore = execResult.newState;
             clientRequestCache[logs[lastApplied].client][logs[lastApplied].transId] = (client=logs[lastApplied].client, transId=logs[lastApplied].transId, result=execResult.result);
         }
     }
 
-    fun logUpToDateCheck(lastIndex: int, lastTerm: int): bool {
+    fun logUpToDateCheck(lastIndex: LogIndex, lastTerm: TermId): bool {
         // Given `lastIndex` and `lastTerm` from the other node,
         // check if its logs is up-to-date.
         if (lastTerm > lastLogTerm(logs)) {

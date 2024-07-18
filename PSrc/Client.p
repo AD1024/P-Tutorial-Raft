@@ -6,7 +6,7 @@
 */
 
 // Client requests
-type tClientRequest = (transId: int, client: Client, cmd: Command, sender: machine);
+type tClientRequest = (transId: TransId, client: Client, cmd: Command, sender: Client);
 event eClientRequest: tClientRequest;
 // The event of notifying the monitor that the client is waiting for a response
 event eClientWaitingResponse: (client: Client, transId: int);
@@ -42,8 +42,8 @@ machine Client {
     state SendOne {
         entry {
             var cmd: Command;
-            print format("{0} is at {1}", this, ptr);
-            print format("Worklist {0}", worklist);
+            // print format("{0} is at {1}", this, ptr);
+            // print format("Worklist {0}", worklist);
             if (sizeof(worklist) == ptr) {
                 // if no more work to do, go to Done
                 goto Done;
@@ -66,7 +66,7 @@ machine Client {
         }
 
         on eHeartbeatTimeout do {
-            print format("Client {0} timed out waiting for response {1}; current retries: {2}", this, tId, retries / 50);
+            // print format("Client {0} timed out waiting for response {1}; current retries: {2}", this, tId, retries / 50);
             if (retries % 50 == 0) {
                 // retries every 50 heartbeats
                 broadcastToCluster();
@@ -77,7 +77,7 @@ machine Client {
 
         on eRaftResponse do (resp: tRaftResponse) {
             if (resp.transId == tId) {
-                print format("Client {0} got response {1}; #retries={2}", this, resp.transId, retries / 50);
+                // print format("Client {0} got response {1}; #retries={2}", this, resp.transId, retries / 50);
                 announce eClientGotResponse, (client=this, transId=tId);
                 retries = 0;
                 goto SendOne;

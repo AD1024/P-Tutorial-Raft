@@ -7,7 +7,11 @@
 
 // Client requests
 type tClientRequest = (transId: TransId, client: Client, cmd: Command, sender: Client);
-event eClientRequest: tClientRequest;
+type tClientPutRequest = (transId: TransId, client: Client, key: KeyT, value: ValueT, sender: Client);
+type tClientGetRequest = (transId: TransId, client: Client, key: KeyT, sender: Client);
+event eClientPutRequest: tClientPutRequest;
+event eClientGetRequest: tClientGetRequest;
+// event eClientRequest: tClientRequest;
 // The event of notifying the monitor that the client is waiting for a response
 event eClientWaitingResponse: (client: Client, transId: int);
 // The event of notifying the monitor that the client got a response for a transaction
@@ -75,20 +79,35 @@ machine Client {
             startTimer(timer);
         }
 
-        on eRaftResponse do (resp: tRaftResponse) {
-            if (resp.transId == tId) {
-                // print format("Client {0} got response {1}; #retries={2}", this, resp.transId, retries / 50);
-                announce eClientGotResponse, (client=this, transId=tId);
-                retries = 0;
-                goto SendOne;
-            }
+        on eRaftGetError do (resp: tRaftGetError) {
+            handleResponse(resp.transId);
+        }
+
+        on eRaftGetResponse do (resp: tRaftGetResponse) {
+            handleResponse(resp.transId);
+        }
+
+        on eRaftPutResponse do (resp: tRaftPutResponse) {
+            handleResponse(resp.transId);
+        }
+    }
+
+    fun handleResponse(responseTransId: TransId) {
+        if (responseTransId == tId) {
+            announce eClientGotResponse, (client=this, transId=tId);
+            retries = 0;
+            goto SendOne;
         }
     }
 
     fun broadcastToCluster() {
         var s: machine;
         foreach (s in servers) {
-            send s, eClientRequest, (transId=tId, client=this, cmd=currentCmd, sender=this);
+            if (currentCmd.op == GET) {
+                send s, eClientGetRequest, (transId=tId, client=this, key=currentCmd.key, sender=this);
+            } else {
+                send s, eClientPutRequest, (transId=tId, client=this, key=currentCmd.key, value=currentCmd.value, sender=this);
+            }
         }
     }
 
@@ -97,6 +116,6 @@ machine Client {
             announce eClientFinishedMonitor, this;
             send view, eClientFinished, this;
         }
-        ignore eRaftResponse, eHeartbeatTimeout;
+        ignore eRaftGetError, eRaftGetResponse, eRaftPutResponse, eHeartbeatTimeout;
     }
 }

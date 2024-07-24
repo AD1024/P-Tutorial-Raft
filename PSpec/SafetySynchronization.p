@@ -1,48 +1,107 @@
-spec SafetySynchronization observes eClientRequest, eRaftResponse {
+spec SafetySynchronization observes eClientPutRequest, eClientGetRequest, eRaftGetError, eRaftGetResponse, eRaftPutResponse, eBecomeLeader {
     var localKVStore: KVStore;
     var requestResultMap: map[Client, map[int, Result]];
-    var requestSeq: seq[Command];
+    var getRequestMap: map[Client, map[TransId, KeyT]];
+    var putRequestMap: map[Client, map[TransId, (key: KeyT, value: ValueT)]];
     var seenId: map[Client, set[int]];
     var respondedId : map[Client, set[int]];
+    var currentLeader: Server;
+    var term: TermId;
 
     start state Init {
         entry {
             localKVStore = newStore();
             requestResultMap = default(map[Client, map[int, Result]]);
-            requestSeq = default(seq[Command]);
+            getRequestMap = default(map[Client, map[TransId, KeyT]]);
+            putRequestMap = default(map[Client, map[TransId, (key: KeyT, value: ValueT)]]);
             seenId = default(map[Client, set[int]]);
             respondedId = default(map[Client, set[int]]);
+            currentLeader = null as Server;
+            term = -1;
             goto Listening;
         }
     }
 
     state Listening {
-        on eClientRequest do (payload: tClientRequest) {
-            var execResult: ExecutionResult;
+        on eBecomeLeader do (payload: tBecomeLeader) {
+            if (payload.term > term) {
+                currentLeader = payload.leader;
+                term = payload.term;
+            }
+        }
+
+        on eClientGetRequest do (payload: tClientGetRequest) {
             if (!(payload.client in keys(seenId))) {
                 seenId[payload.client] = default(set[int]);
             }
             if (!(payload.client in keys(respondedId))) {
                 respondedId[payload.client] = default(set[int]);
             }
+            if (!(payload.client in keys(getRequestMap))) {
+                getRequestMap[payload.client] = default(map[TransId, KeyT]);
+            }
             if (payload.client == payload.sender && !(payload.transId in seenId[payload.client])) {
                 seenId[payload.client] += (payload.transId);
-                requestSeq += (sizeof(requestSeq), payload.cmd);
-                if (!(payload.client in keys(requestResultMap))) {
-                    requestResultMap[payload.client] = default(map[int, Result]);
-                }
-                execResult = execute(localKVStore, payload.cmd);
-                requestResultMap[payload.client][payload.transId] = execResult.result;
-                localKVStore = execResult.newState;
             }
-            // print format("Forwarded request monitored {0}", payload);
+            getRequestMap[payload.client][payload.transId] = payload.key;
         }
 
-        on eRaftResponse do (payload: tRaftResponse) {
-            if (!(payload.client in keys(respondedId))) {
-                respondedId[payload.client] += (payload.transId);
-                assert requestResultMap[payload.client][payload.transId] == payload.result, format("Expected {0} but got {1}; request history: {2}", requestResultMap[payload.client][payload.transId], payload.result, requestSeq);
+        on eClientPutRequest do (payload: tClientPutRequest) {
+            if (!(payload.client in keys(seenId))) {
+                seenId[payload.client] = default(set[int]);
             }
+            if (!(payload.client in keys(respondedId))) {
+                respondedId[payload.client] = default(set[int]);
+            }
+            if (!(payload.client in keys(putRequestMap))) {
+                putRequestMap[payload.client] = default(map[TransId, (key: KeyT, value: ValueT)]);
+            }
+            if (payload.client == payload.sender && !(payload.transId in seenId[payload.client])) {
+                seenId[payload.client] += (payload.transId);
+            }
+            putRequestMap[payload.client][payload.transId] = (key=payload.key, value=payload.value);
+        }
+
+        on eRaftGetError do (payload: tRaftGetError) {
+            var execResult: ExecutionResult;
+            checkResponseValid(payload.client, payload.sender, payload.transId);
+            if (!(payload.client in keys(respondedId)) && currentLeader == payload.sender) {
+                respondedId[payload.client] += (payload.transId);
+                assert payload.key == getRequestMap[payload.client][payload.transId], format("Inconsistent command: from server={0}; from client={1}",
+                                                                                                payload.key, getRequestMap[payload.client][payload.transId]);
+                execResult = executeGet(localKVStore, getRequestMap[payload.client][payload.transId]);
+                assert !execResult.result.success, format("Got RaftGetError but local KV store contains the key: {0}", payload.key);
+            }
+        }
+
+        on eRaftGetResponse do (payload: tRaftGetResponse) {
+            var execResult: ExecutionResult;
+            checkResponseValid(payload.client, payload.sender, payload.transId);
+            if (!(payload.client in keys(respondedId)) && currentLeader == payload.sender) {
+                respondedId[payload.client] += (payload.transId);
+                execResult = executeGet(localKVStore, getRequestMap[payload.client][payload.transId]);
+                assert execResult.result.success, format("Got a Raft response but local KV store failed to get key: {0}", getRequestMap[payload.client][payload.transId]);
+                assert execResult.result.value == payload.value, format("Inconsistent Get result! Expected {0}, got {1}", execResult.result.value, payload.value);
+            }
+        }
+
+        on eRaftPutResponse do (payload: tRaftPutResponse) {
+            var execResult: ExecutionResult;
+            checkResponseValid(payload.client, payload.sender, payload.transId);
+            if (!(payload.client in keys(respondedId)) && currentLeader == payload.sender) {
+                respondedId[payload.client] += (payload.transId);
+                assert payload.client in keys(putRequestMap);
+                execResult = executePut(localKVStore, putRequestMap[payload.client][payload.transId].key, putRequestMap[payload.client][payload.transId].value);
+                localKVStore = execResult.newState;
+                // assert execResult.result.value == payload.value, format("Inconsistent Get result! Expected {0}, got {1}", execResult.result.value, payload.value);
+            }
+        }
+    }
+    fun checkResponseValid(client: Client, sender: Server, tId: TransId) {
+        assert currentLeader != null, "Leader is null but got an eRaftResponse!";
+        if (currentLeader == sender) {
+            assert client in keys(seenId), format("Responding to a client that has not sent any request: {0}", client);
+            assert tId in seenId[client], format("Responding to a non-existing transactionId {0} sent by {1}", tId, client);
         }
     }
 }

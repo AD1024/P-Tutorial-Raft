@@ -1,4 +1,5 @@
-event eBecomeLeader: (term:TermId, leader:Server, log: seq[tServerLog], commitIndex: LogIndex);
+type tBecomeLeader = (term:TermId, leader:Server, log: seq[tServerLog], commitIndex: LogIndex);
+event eBecomeLeader: tBecomeLeader;
 
 spec SafetyOneLeader observes eBecomeLeader{
     var termToLeader: map[int, Server];

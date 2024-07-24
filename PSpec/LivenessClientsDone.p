@@ -1,4 +1,4 @@
-spec LivenessClientsDone observes eClientRequest, eClientFinishedMonitor {
+spec LivenessClientsDone observes eClientPutRequest, eClientGetRequest, eClientFinishedMonitor {
     var activeClients: set[Client];
     var finishedClients: set[Client];
     
@@ -18,7 +18,19 @@ spec LivenessClientsDone observes eClientRequest, eClientFinishedMonitor {
             }
         }
 
-        on eClientRequest do (payload: tClientRequest) {
+        // on eClientRequest do (payload: tClientRequest) {
+        //     if (payload.client == payload.sender) {
+        //         activeClients += (payload.client);
+        //     }
+        // }
+
+        on eClientPutRequest do (payload: tClientPutRequest) {
+            if (payload.client == payload.sender) {
+                activeClients += (payload.client);
+            }
+        }
+
+        on eClientGetRequest do (payload: tClientGetRequest) {
             if (payload.client == payload.sender) {
                 activeClients += (payload.client);
             }
@@ -26,7 +38,14 @@ spec LivenessClientsDone observes eClientRequest, eClientFinishedMonitor {
     }
 
     cold state AllClientsDone {
-        on eClientRequest do (payload: tClientRequest) {
+        on eClientPutRequest do (payload: tClientPutRequest) {
+            if (payload.client == payload.sender) {
+                activeClients += (payload.client);
+                goto ClientsActive;
+            }
+        }
+
+        on eClientGetRequest do (payload: tClientGetRequest) {
             if (payload.client == payload.sender) {
                 activeClients += (payload.client);
                 goto ClientsActive;

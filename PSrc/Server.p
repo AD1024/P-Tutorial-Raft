@@ -7,8 +7,14 @@ type ServerId = int;
 type TransId = int;
 
 // Response message to the client
-type tRaftResponse = (client: Client, transId: TransId, result: Result);
-event eRaftResponse: tRaftResponse;
+type tRaftResponse = (sender: Server, client: Client, transId: TransId, result: Result);
+// event eRaftResponse: tRaftResponse;
+type tRaftPutResponse = (sender: Server, client: Client, transId: TransId, key: KeyT);
+type tRaftGetResponse = (sender: Server, client: Client, transId: TransId, value: ValueT);
+type tRaftGetError = (sender: Server, client: Client, transId: TransId, key: KeyT);
+event eRaftPutResponse: tRaftPutResponse;
+event eRaftGetResponse: tRaftGetResponse;
+event eRaftGetError: tRaftGetError;
 
 // Server initialization message
 event eServerInit: (myId: ServerId, cluster: set[Server], viewServer: View);
@@ -42,7 +48,7 @@ event eViewChangedLeader: Server;
 event eViewChangedCandidate: Server;
 
 // server logs
-type tServerLog = (term: TermId, command: Command, client: Client, transId: TransId);
+type tServerLog = (term: TermId, key: KeyT, value: ValueT, client: Client, transId: TransId);
 
 fun TermLT(t1: TermId, t2: TermId): bool {
     return t1 < t2;
@@ -89,8 +95,13 @@ machine Server {
     var logNotifyTimestamp: int;
 
     // var heartbeatTimer: Timer;
-    var clientRequestQueue: seq[tClientRequest];
-    var clientRequestCache: map[Client, map[int, tRaftResponse]];
+    // var clientRequestQueue: seq[tClientRequest];
+    var requestSeqNum: int;
+    var clientPutRequestQueue: seq[(seqNum: int, payload: tClientPutRequest)];
+    var clientGetRequestQueue: seq[(seqNum: int, payload: tClientGetRequest)];
+    var clientPutRequestCache: map[Client, map[int, tRaftPutResponse]];
+    var clientGetRequestCache: map[Client, map[int, tRaftGetResponse]];
+    var clientGetErrorCache: map[Client, map[int, tRaftGetError]];
 
     start state Init {
         entry {}
@@ -104,8 +115,13 @@ machine Server {
             matchIndex = default(map[Server, int]);
             votesReceived = default(set[Server]);
             logs = default(seq[tServerLog]);
-            clientRequestQueue = default(seq[tClientRequest]);
-            clientRequestCache = default(map[Client, map[int, tRaftResponse]]);
+            // clientRequestQueue = default(seq[tClientRequest]);
+            clientPutRequestQueue = default(seq[(seqNum: int, payload: tClientPutRequest)]);
+            clientGetRequestQueue = default(seq[(seqNum: int, payload: tClientGetRequest)]);
+            requestSeqNum = 0;
+            clientPutRequestCache = default(map[Client, map[int, tRaftPutResponse]]);
+            clientGetRequestCache = default(map[Client, map[int, tRaftGetResponse]]);
+            clientGetErrorCache = default(map[Client, map[int, tRaftGetError]]);
             viewServer = setup.viewServer;
 
             currentTerm = 0;
@@ -141,16 +157,13 @@ machine Server {
             handleRequestVote(payload);
         }
 
-        on eClientRequest do (payload: tClientRequest) {
+        on eClientPutRequest do (payload: tClientPutRequest) {
             // check if the request has been processed
-            if (checkClientRequestCache(payload)) {
-                return;
-            }
-            if (leader != null) {
-                send leader, eClientRequest, forwardedRequest(payload);
-            } else {
-                clientRequestQueue += (sizeof(clientRequestQueue), payload);
-            }
+            respondOrForwardPut(payload);
+        }
+
+        on eClientGetRequest do (payload: tClientGetRequest) {
+            respondOrForwardGet(payload);
         }
 
         on eAppendEntries do (payload: tAppendEntries) {
@@ -165,10 +178,7 @@ machine Server {
             handleAppendEntries(payload);
             if (leader != null) {
                 // propagate client requests to the leader
-                while (sizeof(clientRequestQueue) > 0) {
-                    send leader, eClientRequest, forwardedRequest(clientRequestQueue[0]);
-                    clientRequestQueue -= (0);
-                }
+                drainRequestQueuesTo(leader);
             }
         }
 
@@ -208,11 +218,12 @@ machine Server {
             }
         }
 
-        on eClientRequest do (payload: tClientRequest) {
-            if (checkClientRequestCache(payload)) {
+        on eClientPutRequest do (payload: tClientPutRequest) {
+            if (checkClientRequestCache(payload.client, payload.transId)) {
                 return;
             }
-            clientRequestQueue += (sizeof(clientRequestQueue), payload);
+            clientPutRequestQueue += (sizeof(clientPutRequestQueue), (seqNum=requestSeqNum, payload=payload));
+            requestSeqNum = requestSeqNum + 1;
         }
 
         on eShutdown do {
@@ -280,6 +291,8 @@ machine Server {
         on eHeartbeatTimeout do {
             notifyViewLog();
         }
+
+        ignore eClientGetRequest;
     }
 
     state Leader {
@@ -292,12 +305,7 @@ machine Server {
             matchIndex = fillMap(this, matchIndex, peers, -1);
             announce eBecomeLeader, (term=currentTerm, leader=this, log=logs, commitIndex=commitIndex);
             // first exhaust the client request queu on its own
-            while (sizeof(clientRequestQueue) > 0) {
-                if (!checkClientRequestCache(clientRequestQueue[0])) {
-                    send this, eClientRequest, forwardedRequest(clientRequestQueue[0]);
-                }
-                clientRequestQueue -= (0);
-            }
+            drainRequestQueuesTo(this);
             printLog(format("Become leader with Log={0}, commiteIndex={1}, lastApplied={2}", logs, commitIndex, lastApplied));
             broadcastAppendEntries();
         }
@@ -385,44 +393,57 @@ machine Server {
             }
         }
 
-        on eClientRequest do (payload: tClientRequest) {
+        on eClientGetRequest do (payload: tClientGetRequest) {
+            var execResult: ExecutionResult;
+            if (checkClientRequestCache(payload.client, payload.transId)) {
+                return;
+            }
+            execResult = executeGet(kvStore, payload.key);
+            if (!execResult.result.success) {
+                send payload.client, eRaftGetError, (sender=this, client=payload.client, transId=payload.transId, key=payload.key);
+                if (!(payload.client in keys(clientGetErrorCache))) {
+                    clientGetErrorCache[payload.client] = default(map[int, tRaftGetError]);
+                }
+                clientGetErrorCache[payload.client][payload.transId] = (sender=this, client=payload.client, transId=payload.transId, key=payload.key);
+            } else {
+                send payload.client, eRaftGetResponse, (sender=this, client=payload.client, transId=payload.transId, value=execResult.result.value);
+                if (!(payload.client in keys(clientGetRequestCache))) {
+                    clientGetRequestCache[payload.client] = default(map[int, tRaftGetResponse]);
+                }
+                clientGetRequestCache[payload.client][payload.transId] = (sender=this, client=payload.client, transId=payload.transId, value=execResult.result.value);
+            }
+        }
+
+        on eClientPutRequest do (payload: tClientPutRequest) {
             var newEntry: tServerLog;
             var target: Server;
             var entries: seq[tServerLog];
             var i: int;
             // print format("Received client request {0}", payload);
-            if (checkClientRequestCache(payload)) {
+            if (checkClientRequestCache(payload.client, payload.transId)) {
                 return;
             }
-            if (payload.cmd.op == GET) {
-                // For simplicity, we assume reliable delivery to the client
-                // Network failures are easy to handle in this case, though
-                send payload.client, eRaftResponse, (client=payload.client,
-                                                     transId=payload.transId,
-                                                     result=execute(kvStore, payload.cmd).result);
-            } else {
-                newEntry = (term=currentTerm, command=payload.cmd, client=payload.client, transId=payload.transId);
-                if (!(newEntry in logs)) {
-                    logs += (sizeof(logs), newEntry);
-                }
-                printLog(format("Current leader logs={0}", logs));
-                printLog(format("nextIndex={0}, matchIndex={1}", nextIndex, matchIndex));
-                // use info of nextIndex and matchIndex to broadcast to peers
-                foreach (target in peers) {
-                    if (target != this && nextIndex[target] < sizeof(logs)) {
-                        entries = default(seq[tServerLog]);
-                        i = nextIndex[target];
-                        while (i < sizeof(logs)) {
-                            entries += (i - nextIndex[target], logs[i]);
-                            i = i + 1;
-                        }
-                        send target, eAppendEntries, (term=currentTerm,
-                                                    leader=this,
-                                                    prevLogIndex=nextIndex[target] - 1,
-                                                    prevLogTerm=getLogTerm(logs, nextIndex[target] - 1),
-                                                    entries=entries,
-                                                    leaderCommit=commitIndex);
+            newEntry = (term=currentTerm, key=payload.key, value=payload.value, client=payload.client, transId=payload.transId);
+            if (!(newEntry in logs)) {
+                logs += (sizeof(logs), newEntry);
+            }
+            printLog(format("Current leader logs={0}", logs));
+            printLog(format("nextIndex={0}, matchIndex={1}", nextIndex, matchIndex));
+            // use info of nextIndex and matchIndex to broadcast to peers
+            foreach (target in peers) {
+                if (target != this && nextIndex[target] < sizeof(logs)) {
+                    entries = default(seq[tServerLog]);
+                    i = nextIndex[target];
+                    while (i < sizeof(logs)) {
+                        entries += (i - nextIndex[target], logs[i]);
+                        i = i + 1;
                     }
+                    send target, eAppendEntries, (term=currentTerm,
+                                                leader=this,
+                                                prevLogIndex=nextIndex[target] - 1,
+                                                prevLogTerm=getLogTerm(logs, nextIndex[target] - 1),
+                                                entries=entries,
+                                                leaderCommit=commitIndex);
                 }
             }
             leaderCommits();
@@ -439,11 +460,59 @@ machine Server {
         entry {
             printLog("Service ended. Shutdown.");
         }
-        ignore eShutdown, eRequestVote, eRequestVoteReply, eAppendEntries, eAppendEntriesReply, eClientRequest, eHeartbeatTimeout, eElectionTimeout;
+        ignore eShutdown, eRequestVote, eRequestVoteReply, eAppendEntries, eAppendEntriesReply, eClientPutRequest, eClientGetRequest, eHeartbeatTimeout, eElectionTimeout;
     }
 
-    fun forwardedRequest(req: tClientRequest): tClientRequest {
-        return (transId=req.transId, client=req.client, cmd=req.cmd, sender=this);
+    fun drainRequestQueuesTo(target: Server) {
+        while (sizeof(clientPutRequestQueue) > 0 || sizeof(clientGetRequestQueue) > 0) {
+            if (sizeof(clientPutRequestQueue) == 0) {
+                send target, eClientGetRequest, forwardedGetRequest(clientGetRequestQueue[0].payload);
+                clientGetRequestQueue -= (0);
+            } else if (sizeof(clientGetRequestQueue) == 0) {
+                send target, eClientPutRequest, forwardedPutRequest(clientPutRequestQueue[0].payload);
+                clientPutRequestQueue -= (0);
+            } else {
+                if (clientPutRequestQueue[0].seqNum < clientGetRequestQueue[0].seqNum) {
+                    send target, eClientPutRequest, forwardedPutRequest(clientPutRequestQueue[0].payload);
+                    clientPutRequestQueue -= (0);
+                } else {
+                    send target, eClientGetRequest, forwardedGetRequest(clientGetRequestQueue[0].payload);
+                    clientGetRequestQueue -= (0);
+                }
+            }
+        }
+    }
+
+    fun respondOrForwardPut(payload: tClientPutRequest) {
+        if (checkClientRequestCache(payload.client, payload.transId)) {
+            return;
+        }
+        if (leader != null) {
+            send leader, eClientPutRequest, forwardedPutRequest(payload);
+        } else {
+            clientPutRequestQueue += (sizeof(clientPutRequestQueue), (seqNum=requestSeqNum, payload=payload));
+            requestSeqNum = requestSeqNum + 1;
+        }
+    }
+
+    fun respondOrForwardGet(payload: tClientGetRequest) {
+        if (checkClientRequestCache(payload.client, payload.transId)) {
+            return;
+        }
+        if (leader != null) {
+            send leader, eClientGetRequest, forwardedGetRequest(payload);
+        } else {
+            clientGetRequestQueue += (sizeof(clientGetRequestQueue), (seqNum=requestSeqNum, payload=payload));
+            requestSeqNum = requestSeqNum + 1;
+        }
+    }
+
+    fun forwardedPutRequest(req: tClientPutRequest): tClientPutRequest {
+        return (transId=req.transId, client=req.client, key=req.key, value=req.value, sender=this);
+    }
+
+    fun forwardedGetRequest(req: tClientGetRequest): tClientGetRequest {
+        return (transId=req.transId, client=req.client, key=req.key, sender=this);
     }
 
     fun handleRequestVote(reply: tRequestVote) {
@@ -637,23 +706,32 @@ machine Server {
         while (lastApplied < commitIndex) {
             lastApplied = lastApplied + 1;
             announce eEntryApplied, (logIndex=lastApplied, log=logs[lastApplied]);
-            execResult = execute(kvStore, logs[lastApplied].command);
+            execResult = executePut(kvStore, logs[lastApplied].key, logs[lastApplied].value);
             kvStore = execResult.newState;
             printLog(format("leader committed and processed (by {0}), log: {1}", this, logs[lastApplied]));
             // execute the command and send the result back to the client
-            send logs[lastApplied].client, eRaftResponse, (client=logs[lastApplied].client, transId=logs[lastApplied].transId, result=execResult.result);
+            send logs[lastApplied].client, eRaftPutResponse, (sender=this, client=logs[lastApplied].client,
+                                                                transId=logs[lastApplied].transId, key=logs[lastApplied].key);
             // update the cache
-            clientRequestCache[logs[lastApplied].client][logs[lastApplied].transId] = (client=logs[lastApplied].client, transId=logs[lastApplied].transId, result=execResult.result);
+            if (!(logs[lastApplied].client in keys(clientPutRequestCache))) {
+                clientPutRequestCache[logs[lastApplied].client] = default(map[int, tRaftPutResponse]);
+            }
+            clientPutRequestCache[logs[lastApplied].client][logs[lastApplied].transId] = (sender=this, client=logs[lastApplied].client, transId=logs[lastApplied].transId, key=logs[lastApplied].key);
         }
     }
 
-    fun checkClientRequestCache(payload: tClientRequest): bool {
-        if (!(payload.client in clientRequestCache)) {
-            clientRequestCache[payload.client] = default(map[int, tRaftResponse]);
-        }
+    fun checkClientRequestCache(client: Client, transactionId: TransId): bool {
         // if the result is already in the cache, send it back
-        if (payload.transId in clientRequestCache[payload.client]) {
-            send payload.client, eRaftResponse, clientRequestCache[payload.client][payload.transId];
+        if (client in clientGetErrorCache && transactionId in keys(clientGetErrorCache[client])) {
+            send client, eRaftGetError, clientGetErrorCache[client][transactionId];
+            return true;
+        }
+        if (client in clientGetRequestCache && transactionId in keys(clientGetRequestCache[client])) {
+            send client, eRaftGetResponse, clientGetRequestCache[client][transactionId];
+            return true;
+        }
+        if (client in clientPutRequestCache && transactionId in keys(clientPutRequestCache[client])) {
+            send client, eRaftPutResponse, clientPutRequestCache[client][transactionId];
             return true;
         }
         return false;
@@ -671,9 +749,9 @@ machine Server {
         while (lastApplied < commitIndex) {
             lastApplied = lastApplied + 1;
             announce eEntryApplied, (logIndex=lastApplied, log=logs[lastApplied]);
-            execResult = execute(kvStore, logs[lastApplied].command);
+            execResult = executePut(kvStore, logs[lastApplied].key, logs[lastApplied].value);
             kvStore = execResult.newState;
-            clientRequestCache[logs[lastApplied].client][logs[lastApplied].transId] = (client=logs[lastApplied].client, transId=logs[lastApplied].transId, result=execResult.result);
+            // clientRequestCache[logs[lastApplied].client][logs[lastApplied].transId] = (client=logs[lastApplied].client, transId=logs[lastApplied].transId, result=execResult.result);
         }
     }
 

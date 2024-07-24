@@ -21,10 +21,10 @@ fun randomWorkload(numCmd: int): seq[Command] {
         if (sizeof(puts) > 0 && $) {
             key = choose(puts);
         } else {
-            key = choose(1024);
+            key = choose(10);
             puts += (key);
         }
-        if ($) {
+        if (sizeof(puts) == 0 || $) {
             // PUT
             cmds += (i, (op=PUT, key=key, value=choose(1024)));
         } else {

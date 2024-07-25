@@ -1,4 +1,4 @@
-spec SafetySynchronization observes eClientPutRequest, eClientGetRequest, eRaftGetError, eRaftGetResponse, eRaftPutResponse, eBecomeLeader {
+spec SafetySynchronization observes eClientPutRequest, eClientGetRequest, eRaftGetResponse, eRaftPutResponse, eBecomeLeader {
     var localKVStore: KVStore;
     var requestResultMap: map[Client, map[int, Result]];
     var getRequestMap: map[Client, map[TransId, KeyT]];
@@ -62,25 +62,13 @@ spec SafetySynchronization observes eClientPutRequest, eClientGetRequest, eRaftG
             putRequestMap[payload.client][payload.transId] = (key=payload.key, value=payload.value);
         }
 
-        on eRaftGetError do (payload: tRaftGetError) {
-            var execResult: ExecutionResult;
-            checkResponseValid(payload.client, payload.sender, payload.transId);
-            if (!(payload.client in keys(respondedId)) && currentLeader == payload.sender) {
-                respondedId[payload.client] += (payload.transId);
-                assert payload.key == getRequestMap[payload.client][payload.transId], format("Inconsistent command: from server={0}; from client={1}",
-                                                                                                payload.key, getRequestMap[payload.client][payload.transId]);
-                execResult = executeGet(localKVStore, getRequestMap[payload.client][payload.transId]);
-                assert !execResult.result.success, format("Got RaftGetError but local KV store contains the key: {0}", payload.key);
-            }
-        }
-
         on eRaftGetResponse do (payload: tRaftGetResponse) {
             var execResult: ExecutionResult;
             checkResponseValid(payload.client, payload.sender, payload.transId);
             if (!(payload.client in keys(respondedId)) && currentLeader == payload.sender) {
                 respondedId[payload.client] += (payload.transId);
                 execResult = executeGet(localKVStore, getRequestMap[payload.client][payload.transId]);
-                assert execResult.result.success, format("Got a Raft response but local KV store failed to get key: {0}", getRequestMap[payload.client][payload.transId]);
+                assert execResult.result.success == payload.success, format("Inconsistent status: {0}", getRequestMap[payload.client][payload.transId]);
                 assert execResult.result.value == payload.value, format("Inconsistent Get result! Expected {0}, got {1}", execResult.result.value, payload.value);
             }
         }

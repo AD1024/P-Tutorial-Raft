@@ -79,10 +79,6 @@ machine Client {
             startTimer(timer);
         }
 
-        on eRaftGetError do (resp: tRaftGetError) {
-            handleResponse(resp.transId);
-        }
-
         on eRaftGetResponse do (resp: tRaftGetResponse) {
             handleResponse(resp.transId);
         }
@@ -116,6 +112,6 @@ machine Client {
             announce eClientFinishedMonitor, this;
             send view, eClientFinished, this;
         }
-        ignore eRaftGetError, eRaftGetResponse, eRaftPutResponse, eHeartbeatTimeout;
+        ignore eRaftGetResponse, eRaftPutResponse, eHeartbeatTimeout;
     }
 }

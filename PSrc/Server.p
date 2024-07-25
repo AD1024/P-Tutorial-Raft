@@ -10,11 +10,11 @@ type TransId = int;
 type tRaftResponse = (sender: Server, client: Client, transId: TransId, result: Result);
 // event eRaftResponse: tRaftResponse;
 type tRaftPutResponse = (sender: Server, client: Client, transId: TransId, key: KeyT);
-type tRaftGetResponse = (sender: Server, client: Client, transId: TransId, value: ValueT);
-type tRaftGetError = (sender: Server, client: Client, transId: TransId, key: KeyT);
+type tRaftGetResponse = (sender: Server, client: Client, success: bool, transId: TransId, value: ValueT);
+// type tRaftGetError = (sender: Server, client: Client, transId: TransId, key: KeyT);
 event eRaftPutResponse: tRaftPutResponse;
 event eRaftGetResponse: tRaftGetResponse;
-event eRaftGetError: tRaftGetError;
+// event eRaftGetError: tRaftGetError;
 
 // Server initialization message
 event eServerInit: (myId: ServerId, cluster: set[Server], viewServer: View);
@@ -101,7 +101,6 @@ machine Server {
     var clientGetRequestQueue: seq[(seqNum: int, payload: tClientGetRequest)];
     var clientPutRequestCache: map[Client, map[int, tRaftPutResponse]];
     var clientGetRequestCache: map[Client, map[int, tRaftGetResponse]];
-    var clientGetErrorCache: map[Client, map[int, tRaftGetError]];
 
     start state Init {
         entry {}
@@ -121,7 +120,6 @@ machine Server {
             requestSeqNum = 0;
             clientPutRequestCache = default(map[Client, map[int, tRaftPutResponse]]);
             clientGetRequestCache = default(map[Client, map[int, tRaftGetResponse]]);
-            clientGetErrorCache = default(map[Client, map[int, tRaftGetError]]);
             viewServer = setup.viewServer;
 
             currentTerm = 0;
@@ -399,19 +397,11 @@ machine Server {
                 return;
             }
             execResult = executeGet(kvStore, payload.key);
-            if (!execResult.result.success) {
-                send payload.client, eRaftGetError, (sender=this, client=payload.client, transId=payload.transId, key=payload.key);
-                if (!(payload.client in keys(clientGetErrorCache))) {
-                    clientGetErrorCache[payload.client] = default(map[int, tRaftGetError]);
-                }
-                clientGetErrorCache[payload.client][payload.transId] = (sender=this, client=payload.client, transId=payload.transId, key=payload.key);
-            } else {
-                send payload.client, eRaftGetResponse, (sender=this, client=payload.client, transId=payload.transId, value=execResult.result.value);
-                if (!(payload.client in keys(clientGetRequestCache))) {
-                    clientGetRequestCache[payload.client] = default(map[int, tRaftGetResponse]);
-                }
-                clientGetRequestCache[payload.client][payload.transId] = (sender=this, client=payload.client, transId=payload.transId, value=execResult.result.value);
+            send payload.client, eRaftGetResponse, (sender=this, client=payload.client, success=execResult.result.success, transId=payload.transId, value=execResult.result.value);
+            if (!(payload.client in keys(clientGetRequestCache))) {
+                clientGetRequestCache[payload.client] = default(map[int, tRaftGetResponse]);
             }
+            clientGetRequestCache[payload.client][payload.transId] = (sender=this, client=payload.client, success=execResult.result.success, transId=payload.transId, value=execResult.result.value);
         }
 
         on eClientPutRequest do (payload: tClientPutRequest) {
@@ -722,10 +712,6 @@ machine Server {
 
     fun checkClientRequestCache(client: Client, transactionId: TransId): bool {
         // if the result is already in the cache, send it back
-        if (client in clientGetErrorCache && transactionId in keys(clientGetErrorCache[client])) {
-            send client, eRaftGetError, clientGetErrorCache[client][transactionId];
-            return true;
-        }
         if (client in clientGetRequestCache && transactionId in keys(clientGetRequestCache[client])) {
             send client, eRaftGetResponse, clientGetRequestCache[client][transactionId];
             return true;

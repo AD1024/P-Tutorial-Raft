@@ -1,7 +1,7 @@
-event eRaftConfigurations: (clusterSize: int, quorumSize: int);
+event eRaftConfig: (clusterSize: int, quorumSize: int);
 
 fun setUpCluster(numServers: int, numClients: int, timeoutRate: int, crashRate: int, numFailures: int): View {
-    announce eRaftConfigurations, (clusterSize=numServers, quorumSize=numServers / 2 + 1);
+    announce eRaftConfig, (clusterSize=numServers, quorumSize=numServers / 2 + 1);
     return new View((numServers=numServers, numClients=numClients,
                                 timeoutRate=timeoutRate, crashRate=crashRate, numFailures=numFailures));
 }

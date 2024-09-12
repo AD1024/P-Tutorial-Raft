@@ -71,8 +71,8 @@ machine Client {
 
         on eHeartbeatTimeout do {
             // print format("Client {0} timed out waiting for response {1}; current retries: {2}", this, tId, retries / 50);
-            if (retries % 50 == 0) {
-                // retries every 50 heartbeats
+            if (retries % 200 == 0) {
+                // retries every 200 heartbeats
                 broadcastToCluster();
             }
             retries = retries + 1;

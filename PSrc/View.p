@@ -79,7 +79,7 @@ machine View {
             clientsDone = default(set[machine]);
             i = 0;
             while (i < numClients) {
-                new Client((viewService=this, servers=servers, requests=randomWorkload(5)));
+                new Client((viewService=this, servers=servers, requests=randomWorkload(3)));
                 i = i + 1;
             } 
             goto Monitoring;
